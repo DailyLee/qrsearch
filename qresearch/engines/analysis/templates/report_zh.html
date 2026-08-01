@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>研究报告 {{ run_id }}</title>
+<style>
+:root {
+  --bg: #f6f8fb;
+  --card: #ffffff;
+  --ink: #1a2332;
+  --muted: #5b6b7c;
+  --line: #d8e0ea;
+  --accent: #0b5cab;
+  --good: #1b7f4a;
+  --bad: #b42318;
+  --warn: #9a6700;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: var(--ink);
+  background: linear-gradient(180deg, #eef3f9 0%, var(--bg) 220px);
+  line-height: 1.55;
+}
+.wrap { max-width: 1080px; margin: 0 auto; padding: 2rem 1.25rem 3rem; }
+header.hero {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 1.5rem 1.75rem;
+  margin-bottom: 1.25rem;
+}
+header.hero h1 { margin: 0 0 0.4rem; font-size: 1.65rem; letter-spacing: 0.02em; }
+.sub { color: var(--muted); font-size: 0.95rem; }
+.badge {
+  display: inline-block;
+  padding: 0.15rem 0.65rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-left: 0.5rem;
+  vertical-align: middle;
+}
+.badge.ok { background: #e6f6ec; color: var(--good); }
+.badge.bad { background: #fdecea; color: var(--bad); }
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.75rem;
+  margin: 1.1rem 0 0;
+}
+.card {
+  background: #f8fbff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.75rem 0.9rem;
+}
+.card .label { color: var(--muted); font-size: 0.78rem; }
+.card .value { font-size: 1.2rem; font-weight: 700; margin-top: 0.15rem; }
+.card .value.pos { color: var(--good); }
+.card .value.neg { color: var(--bad); }
+section {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 1rem;
+}
+section h2 {
+  margin: 0 0 0.85rem;
+  font-size: 1.15rem;
+  color: var(--accent);
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 0.45rem;
+}
+h3 { margin: 1rem 0 0.5rem; font-size: 1rem; color: #274866; }
+table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+th, td { border-bottom: 1px solid var(--line); padding: 0.45rem 0.55rem; text-align: left; }
+th { background: #f3f7fc; color: #334; font-weight: 600; }
+tr:hover td { background: #fafcff; }
+.num { font-variant-numeric: tabular-nums; text-align: right; }
+.muted { color: var(--muted); }
+.kv { display: grid; grid-template-columns: 180px 1fr; gap: 0.35rem 0.75rem; font-size: 0.94rem; }
+.kv div.k { color: var(--muted); }
+code, .mono { font-family: Consolas, "SF Mono", monospace; font-size: 0.88em; }
+.chip {
+  display: inline-block;
+  background: #eef4fb;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.1rem 0.45rem;
+  margin: 0.1rem 0.2rem 0.1rem 0;
+  font-size: 0.85rem;
+}
+.note {
+  background: #fff8e8;
+  border: 1px solid #f0e0b2;
+  color: var(--warn);
+  border-radius: 8px;
+  padding: 0.65rem 0.85rem;
+  font-size: 0.9rem;
+}
+.chart-wrap { overflow-x: auto; }
+svg.equity { width: 100%; max-width: 100%; height: auto; display: block; }
+ul.compact { margin: 0.3rem 0; padding-left: 1.2rem; }
+footer {
+  margin-top: 1.5rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+  text-align: center;
+}
+@media (max-width: 640px) {
+  .kv { grid-template-columns: 1fr; }
+  .cards { grid-template-columns: repeat(2, 1fr); }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="hero">
+    <h1>量化研究报告
+      <span class="badge {{ 'ok' if promotable else 'bad' }}">
+        {{ '可晋升' if promotable else '不可晋升' }}
+      </span>
+    </h1>
+    <p class="sub">
+      运行 ID：<code>{{ run_id }}</code>
+      {% if generated_at %} · 生成时间：{{ generated_at }}{% endif %}
+      {% if locale %} · {{ locale }}{% endif %}
+    </p>
+    <div class="cards">
+      <div class="card"><div class="label">事件数</div><div class="value">{{ n_events }}</div></div>
+      <div class="card"><div class="label">成交笔数</div><div class="value">{{ metrics.n_trades | default(0) }}</div></div>
+      <div class="card"><div class="label">总收益率</div>
+        <div class="value {{ 'pos' if (metrics.total_return|default(0)) >= 0 else 'neg' }}">
+          {{ pct(metrics.total_return) }}
+        </div>
+      </div>
+      <div class="card"><div class="label">年化收益</div>
+        <div class="value {{ 'pos' if (metrics.ann_return|default(0)) >= 0 else 'neg' }}">
+          {{ pct(metrics.ann_return) }}
+        </div>
+      </div>
+      <div class="card"><div class="label">夏普比率</div><div class="value">{{ fmt(metrics.sharpe, 3) }}</div></div>
+      <div class="card"><div class="label">信息比率 IR</div><div class="value">{{ fmt(metrics.information_ratio, 3) if metrics.information_ratio is not none else '-' }}</div></div>
+      <div class="card"><div class="label">试次调整夏普</div><div class="value">{{ fmt(metrics.deflated_sharpe, 3) if metrics.deflated_sharpe is not none else '-' }}</div></div>
+      <div class="card"><div class="label">最大回撤</div>
+        <div class="value neg">{{ pct(metrics.max_dd) }}</div>
+      </div>
+      <div class="card"><div class="label">期末净值</div><div class="value">{{ money(metrics.end_nav) }}</div></div>
+      <div class="card"><div class="label">年化换手</div><div class="value">{{ fmt(metrics.ann_turnover, 2) if metrics.ann_turnover is not none else '-' }}</div></div>
+    </div>
+  </header>
+
+  <section>
+    <h2>1. 门禁与结论</h2>
+    {% if not promotable %}
+    <p class="note">当前未通过晋升门禁{% if gate_reasons %}：{{ gate_reasons | join('；') }}{% endif %}。单年样本常见原因为样本外折数不足。</p>
+    {% else %}
+    <p>已通过晋升门禁，可执行 <code>qr promote</code> 生成 Model Package。</p>
+    {% endif %}
+    <div class="kv">
+      <div class="k">门禁结果</div><div>{{ '通过' if gates.passed else '未通过' }}</div>
+      <div class="k">最低 OOS 折数</div><div>{{ gates_cfg.min_oos_folds if gates_cfg else '-' }}</div>
+      <div class="k">最低成交笔数</div><div>{{ gates_cfg.min_trades if gates_cfg else '-' }}</div>
+      <div class="k">未通过原因</div><div>{{ gate_reasons | join('；') if gate_reasons else '无' }}</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>2. 因子分析</h2>
+    {% if ic_best %}
+    <p class="muted">按 |Rank IC| 排序的前若干特征×持有期组合：</p>
+    <table>
+      <thead>
+        <tr><th>特征</th><th class="num">持有期(日)</th><th class="num">样本数</th><th class="num">Rank IC</th></tr>
+      </thead>
+      <tbody>
+      {% for r in ic_best %}
+        <tr>
+          <td class="mono">{{ r.feature }}</td>
+          <td class="num">{{ r.horizon }}</td>
+          <td class="num">{{ r.n }}</td>
+          <td class="num {{ 'pos' if r.rank_ic|float >= 0 else 'neg' }}">{{ fmt(r.rank_ic, 4) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+    {% if ic_by_feature %}
+    <h3>按特征汇总（各持有期均值）</h3>
+    <table>
+      <thead>
+        <tr><th>特征</th><th class="num">平均 Rank IC</th><th class="num">最大 |IC|</th><th class="num">观测点数</th></tr>
+      </thead>
+      <tbody>
+      {% for r in ic_by_feature %}
+        <tr>
+          <td class="mono">{{ r.feature }}</td>
+          <td class="num">{{ fmt(r.mean_ic, 4) }}</td>
+          <td class="num">{{ fmt(r.max_abs_ic, 4) }}</td>
+          <td class="num">{{ r.n_points }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+    {% if not ic_table %}
+    <p class="muted">本次运行未生成因子 IC 结果。</p>
+    {% endif %}
+    {% if signals %}
+    <h3>信号规则（进入回测的事件筛选/排序）</h3>
+    <p><strong>过滤条件</strong></p>
+    {% if signals.filters %}
+    <ul class="compact">
+      {% for f in signals.filters %}
+      <li><code>{{ f.field }}</code> {{ op_zh(f.op) }} <code>{{ f.value }}{% if f.value_max is not none %} ~ {{ f.value_max }}{% endif %}</code></li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">无过滤条件</p>
+    {% endif %}
+    <p><strong>排序</strong></p>
+    {% if signals.rank_by %}
+    <ul class="compact">
+      {% for r in signals.rank_by %}
+      <li><code>{{ r.field }}</code>（{{ '升序' if r.ascending else '降序' }}）</li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">未配置排序</p>
+    {% endif %}
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>3. 策略详情</h2>
+    <h3>组合</h3>
+    <div class="kv">
+      <div class="k">初始资金</div><div>{{ money(portfolio.starting_cash) }} {{ portfolio.currency }}</div>
+      <div class="k">仓位算法</div><div>{{ sizing_zh(portfolio.sizing) }} / 权重基数={{ sizing_base_zh(portfolio.sizing_base) }}</div>
+      <div class="k">单标的上限</div><div>{{ pct(portfolio.max_weight) }}</div>
+      <div class="k">最大持股数</div><div>{{ portfolio.max_names if portfolio.max_names is not none else '不限' }}</div>
+      <div class="k">单日最大新开仓</div><div>{{ portfolio.max_new_entries_per_day }}</div>
+      <div class="k">最小交易单位</div><div>{{ portfolio.lot_size }} 股</div>
+    </div>
+    <h3>执行</h3>
+    <div class="kv">
+      <div class="k">成交价</div><div>{{ price_zh(execution.price) }}</div>
+      <div class="k">决策延迟</div><div>{{ execution.lag_sessions }} 个交易日</div>
+      <div class="k">订单有效期</div><div>{{ execution.order_validity_sessions }} 个交易日（{{ '当日有效 GFD' if execution.order_validity_sessions == 1 else '跨日有效 GTD' }}）</div>
+      <div class="k">开盘过滤</div><div>{{ '开启' if execution.entry_filter.enabled else '关闭' }}；参照={{ ref_zh(execution.entry_filter.ref) }}</div>
+      {% if execution.entry_filter.enabled %}
+      <div class="k">开盘收益区间</div>
+      <div>{{ pct(execution.entry_filter.min_open_ret) }} ~ {{ pct(execution.entry_filter.max_open_ret) }}</div>
+      {% endif %}
+    </div>
+    <h3>成本</h3>
+    {% if costs %}
+    <div class="kv">
+      <div class="k">佣金费率</div><div>{{ pct(costs.commission_rate, 4) }}（最低 {{ money(costs.commission_min) }}）</div>
+      <div class="k">印花税（卖出）</div><div>{{ pct(costs.stamp_duty_rate, 4) }}</div>
+      <div class="k">滑点</div><div>{{ fmt(costs.slippage_bps, 1) }} bps</div>
+    </div>
+    {% endif %}
+    <h3>风控与退出</h3>
+    <div class="kv">
+      <div class="k">止损</div><div>{{ pct(risk.stop_loss) if risk.stop_loss is not none else '未设置' }}</div>
+      <div class="k">止盈</div><div>{{ pct(risk.take_profit) if risk.take_profit is not none else '未设置' }}</div>
+      <div class="k">最大持有期</div><div>{{ risk.max_hold_sessions if risk.max_hold_sessions is not none else '未设置' }}</div>
+      <div class="k">退出优先级</div>
+      <div>{% for x in risk.exit_priority %}<span class="chip">{{ exit_zh(x) }}</span>{% endfor %}</div>
+      <div class="k">T+1</div><div>开仓当日不可平仓</div>
+    </div>
+    <h3>复权与基准</h3>
+    <div class="kv">
+      <div class="k">复权</div><div>{{ adj_zh(adjustment.mode if adjustment else 'qfq') }} · PIT as_of=<code>{{ adjustment_as_of }}</code></div>
+      <div class="k">基准</div><div><code>{{ benchmark.instrument if benchmark else '-' }}</code></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>4. 回测绩效</h2>
+    <table>
+      <thead><tr><th>指标</th><th class="num">数值</th></tr></thead>
+      <tbody>
+        <tr><td>总收益率</td><td class="num">{{ pct(metrics.total_return) }}</td></tr>
+        <tr><td>年化收益率</td><td class="num">{{ pct(metrics.ann_return) }}</td></tr>
+        <tr><td>夏普比率</td><td class="num">{{ fmt(metrics.sharpe, 3) }}</td></tr>
+        <tr><td>最大回撤</td><td class="num">{{ pct(metrics.max_dd) }}</td></tr>
+        <tr><td>期末净值</td><td class="num">{{ money(metrics.end_nav) }}</td></tr>
+        <tr><td>完整交易对数</td><td class="num">{{ metrics.n_trades }}</td></tr>
+        <tr><td>覆盖交易日</td><td class="num">{{ metrics.n_sessions }}</td></tr>
+      </tbody>
+    </table>
+    <h3>相对基准 / 换手 / 容量</h3>
+    <table>
+      <thead><tr><th>指标</th><th class="num">数值</th></tr></thead>
+      <tbody>
+        <tr><td>基准</td><td class="num mono">{{ metrics.benchmark | default('-') }}</td></tr>
+        <tr><td>基准可得</td><td class="num">{{ '是' if metrics.benchmark_available else '否' }}</td></tr>
+        <tr><td>基准总收益</td><td class="num">{{ pct(metrics.benchmark_total_return) }}</td></tr>
+        <tr><td>超额收益</td><td class="num">{{ pct(metrics.excess_return) }}</td></tr>
+        <tr><td>年化超额</td><td class="num">{{ pct(metrics.ann_excess) }}</td></tr>
+        <tr><td>跟踪误差（年化）</td><td class="num">{{ pct(metrics.tracking_error) }}</td></tr>
+        <tr><td>信息比率 IR</td><td class="num">{{ fmt(metrics.information_ratio, 3) }}</td></tr>
+        <tr><td>日均换手</td><td class="num">{{ pct(metrics.avg_daily_turnover) }}</td></tr>
+        <tr><td>年化换手</td><td class="num">{{ fmt(metrics.ann_turnover, 2) }}</td></tr>
+        <tr><td>容量代理</td><td class="num">{{ metrics.capacity | default('unavailable') }}</td></tr>
+        <tr><td>成交额占 ADV 中位</td><td class="num">{{ pct(metrics.median_participation) }}</td></tr>
+        <tr><td>成交额占 ADV P90</td><td class="num">{{ pct(metrics.p90_participation) }}</td></tr>
+      </tbody>
+    </table>
+    {% if equity_svg %}
+    <h3>净值曲线</h3>
+    <div class="chart-wrap">{{ equity_svg | safe }}</div>
+    {% if equity_summary %}
+    <p class="muted">区间：{{ equity_summary.start_session }} → {{ equity_summary.end_session }}；
+      峰值净值 {{ money(equity_summary.peak_nav) }}；最大持仓数 {{ equity_summary.max_positions }}</p>
+    {% endif %}
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>5. 交易统计</h2>
+    {% if trade_stats %}
+    <div class="cards">
+      <div class="card"><div class="label">胜率</div><div class="value">{{ pct(trade_stats.win_rate) }}</div></div>
+      <div class="card"><div class="label">平均盈亏</div><div class="value">{{ money(trade_stats.avg_pnl) }}</div></div>
+      <div class="card"><div class="label">盈亏比</div><div class="value">{{ fmt(trade_stats.profit_factor, 2) }}</div></div>
+      <div class="card"><div class="label">总手续费</div><div class="value">{{ money(trade_stats.total_fees) }}</div></div>
+    </div>
+    <h3>退出原因分布</h3>
+    <table>
+      <thead><tr><th>原因</th><th class="num">笔数</th><th class="num">占比</th></tr></thead>
+      <tbody>
+      {% for r in trade_stats.exit_reasons %}
+        <tr><td>{{ exit_zh(r.reason) }}</td><td class="num">{{ r.count }}</td><td class="num">{{ pct(r.share) }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <h3>盈亏分位（卖出成交）</h3>
+    <div class="kv">
+      <div class="k">最小 / 25% / 中位</div>
+      <div>{{ money(trade_stats.pnl_min) }} / {{ money(trade_stats.pnl_p25) }} / {{ money(trade_stats.pnl_p50) }}</div>
+      <div class="k">75% / 最大</div>
+      <div>{{ money(trade_stats.pnl_p75) }} / {{ money(trade_stats.pnl_max) }}</div>
+    </div>
+    {% else %}
+    <p class="muted">无成交明细可统计。</p>
+    {% endif %}
+
+    {% if sample_trades %}
+    <h3>成交样本（最近 {{ sample_trades|length }} 笔）</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>日期</th><th>标的</th><th>方向</th><th class="num">数量</th>
+          <th class="num">价格</th><th class="num">费用</th><th>原因</th><th class="num">盈亏</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for t in sample_trades %}
+        <tr>
+          <td>{{ t.session }}</td>
+          <td class="mono">{{ t.instrument }}</td>
+          <td>{{ '买入' if t.side == 'buy' else '卖出' }}</td>
+          <td class="num">{{ t.qty }}</td>
+          <td class="num">{{ fmt(t.price, 2) }}</td>
+          <td class="num">{{ fmt(t.fee, 2) }}</td>
+          <td>{{ exit_zh(t.reason) }}</td>
+          <td class="num">{{ money(t.pnl) if t.pnl is not none and t.pnl == t.pnl else '-' }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>6. 过拟合 / 试次</h2>
+    {% if overfit or metrics.deflated_sharpe is not none %}
+    <div class="kv">
+      <div class="k">观测夏普</div><div>{{ fmt(overfit.observed_sharpe if overfit else metrics.sharpe, 3) }}</div>
+      <div class="k">收益观测数</div><div>{{ overfit.n_obs if overfit else metrics.n_return_obs }}</div>
+      <div class="k">假定独立试次</div><div>{{ overfit.n_trials if overfit else metrics.n_trials }}</div>
+      <div class="k">零假设最大夏普</div><div>{{ fmt(overfit.sr_null_max if overfit else metrics.sr_null_max, 3) }}</div>
+      <div class="k">试次调整夏普</div><div>{{ fmt(overfit.deflated_sharpe if overfit else metrics.deflated_sharpe, 3) }}</div>
+      <div class="k">DSR 概率</div><div>{{ fmt(overfit.dsr_prob if overfit else metrics.dsr_prob, 3) }}</div>
+      <div class="k">方法</div><div class="muted">{{ overfit.method if overfit else 'bailey_lopez_de_prado_approx' }}（V1 近似）</div>
+    </div>
+    <p class="muted">多轮改参/优化时请递增 <code>gates.n_trials_assumed</code> 或 CLI <code>--n-trials-assumed</code>。</p>
+    {% else %}
+    <p class="muted">本次未计算试次调整夏普。</p>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>7. PIT / 数据审计</h2>
+    {% if pit_audit %}
+    <p>状态：
+      <span class="badge {{ 'ok' if pit_audit.status == 'pass' else ('bad' if pit_audit.status == 'fail' else '') }}">
+        {{ pit_audit.status }}
+      </span>
+    </p>
+    <div class="kv">
+      <div class="k">复权方法</div>
+      <div>{{ pit_audit.adjustment.methodology if pit_audit.adjustment else '-' }}
+        （as_of=<code>{{ pit_audit.adjustment.as_of if pit_audit.adjustment else adjustment_as_of }}</code>）</div>
+      <div class="k">完整会话级 PIT 复权</div>
+      <div>{{ '已实现' if pit_audit.adjustment and pit_audit.adjustment.full_pit_adj_factor_asof_session else '未实现（V1 为窗口终点前复权）' }}</div>
+      <div class="k">数据指纹</div><div class="mono">{{ pit_audit.data_fingerprint }}</div>
+      <div class="k">警告</div><div>{{ pit_audit.warnings | join('；') if pit_audit.warnings else '无' }}</div>
+      <div class="k">失败项</div><div>{{ pit_audit.failures | join('；') if pit_audit.failures else '无' }}</div>
+    </div>
+    {% if pit_audit.checks %}
+    <h3>检查项</h3>
+    <table>
+      <thead><tr><th>ID</th><th>状态</th><th>说明</th></tr></thead>
+      <tbody>
+      {% for c in pit_audit.checks %}
+        <tr>
+          <td class="mono">{{ c.id }}</td>
+          <td>{{ c.status }}</td>
+          <td class="muted mono" style="font-size:0.8rem;">{{ c.detail }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+    {% else %}
+    <p class="muted">无 PIT 审计产物（旧 run 可重跑 research 生成）。</p>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>8. 拒单与未成交</h2>
+    {% if reject_stats and reject_stats.total %}
+    <p>共记录拒单/跳过 <strong>{{ reject_stats.total }}</strong> 条（报告展示汇总，完整明细见 artifacts）。</p>
+    <table>
+      <thead><tr><th>原因</th><th class="num">次数</th></tr></thead>
+      <tbody>
+      {% for r in reject_stats.by_reason %}
+        <tr><td>{{ reject_zh(r.reason) }}</td><td class="num">{{ r.count }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted">无拒单汇总，或本次全部可成交。</p>
+    {% endif %}
+  </section>
+
+  {% if walk_forward %}
+  <section>
+    <h2>9. Walk-forward</h2>
+    <pre class="mono" style="white-space:pre-wrap;background:#f7f9fc;padding:0.75rem;border-radius:8px;border:1px solid var(--line);">{{ wf_json }}</pre>
+  </section>
+  {% endif %}
+
+  <section>
+    <h2>{% if walk_forward %}10{% else %}9{% endif %}. 产物路径</h2>
+    <div class="kv">
+      {% for k, v in artifact_links.items() %}
+      <div class="k">{{ artifact_zh(k) }}</div><div class="mono">{{ v }}</div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <footer>由 qresearch 自动生成 · 事件驱动研究内核 · 本报告仅供研究用途</footer>
+</div>
+</body>
+</html>

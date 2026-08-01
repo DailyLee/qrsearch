@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "qresearch"
+version = "0.1.0"
+description = "Event-driven A-share research kernel and ops CLI"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "typer>=0.12",
+  "pydantic>=2",
+  "pydantic-settings>=2",
+  "polars>=1.0",
+  "pyyaml>=6",
+  "numpy>=1.26",
+  "optuna>=3.6",
+  "jinja2>=3.1",
+  "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+report = ["matplotlib>=3.8"]
+
+[project.scripts]
+qr = "qresearch.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["qresearch"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"qresearch/engines/analysis/templates/report_zh.html" = "qresearch/engines/analysis/templates/report_zh.html"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+  "e2e_local: tests that need local zer0share and full event CSVs",
+]

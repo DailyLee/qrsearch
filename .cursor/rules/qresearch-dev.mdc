@@ -1,0 +1,24 @@
+---
+description: qresearch 工程边界与迭代质量闸门（始终生效）
+alwaysApply: true
+---
+
+# qresearch 开发闸门
+
+完整规范见仓库根目录 `agent.md`。研究闭环见 `.cursor/skills/qresearch/SKILL.md`。
+
+## 硬约束
+
+- 仓库 = 确定性 CLI/库；勿引入 vnpy；行情仅 zer0share / `engines/data/vendor.py`。
+- Agent I/O：`--format json --quiet`；stdout JSON 信封；退出码 0/2/3/4/5。
+- 无隐式 +1：延迟只用 `execution.lag_sessions`。
+- 领域词：`entry_intent_date` / `exit_intent_date` / `features.*`；CSV `buy_date`/`code` 仅 ingest alias。
+- 信号层状态无关；持仓配额在 `pretrade`；回测不依赖 CLI/HTML/Optuna。
+
+## 改代码时
+
+- 最小改动；禁止搭车重构；新配置进 `config/models.py` 且带安全默认。
+- 改 `engines/backtest/**` 或成交/退出/涨跌停语义 → 必须补合成 panel 单测，并跑 `pytest -q`。
+- 勿覆盖唯一的 `configs/examples/*`；实验配置写 `configs/experiments/`。
+- 勿编造行情；缺数据就失败并提示同步 zer0share。
+- 破坏信封或 CLI 行为时同步 README / skill `reference.md`。
