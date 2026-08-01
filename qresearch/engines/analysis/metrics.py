@@ -135,6 +135,19 @@ def relative_metrics(
     excess_total = port_total - bench_total
     n = len(paired_p)
     ann_excess = (1.0 + excess_total) ** (252 / max(n, 1)) - 1.0 if n > 1 else excess_total
+
+    # Align benchmark NAV to equity sessions (start at 1.0) for chart overlay
+    bench_nav: list[float] = []
+    nav = 1.0
+    for i, s in enumerate(sessions):
+        if i == 0:
+            bench_nav.append(nav)
+            continue
+        br = b_rets_full[i]
+        if br is not None:
+            nav *= 1.0 + float(br)
+        bench_nav.append(nav)
+
     return {
         "benchmark": benchmark,
         "benchmark_available": True,
@@ -144,6 +157,7 @@ def relative_metrics(
         "information_ratio": ir,
         "benchmark_total_return": bench_total,
         "n_relative_obs": n,
+        "benchmark_nav_series": bench_nav,
     }
 
 
@@ -238,6 +252,89 @@ def capacity_metrics(
     }
 
 
+def _year_of_session(v: object) -> int:
+    d = _as_date(v)
+    return d.year
+
+
+def yearly_breakdown(
+    equity: list[dict],
+    trades: list[dict],
+    *,
+    panel: PricePanel | None = None,
+    benchmark: str | None = None,
+) -> list[dict[str, Any]]:
+    """Calendar-year total/ann return, max DD, and excess vs benchmark."""
+    if not equity:
+        return []
+    by_year: dict[int, list[dict]] = {}
+    for e in equity:
+        by_year.setdefault(_year_of_session(e["session"]), []).append(e)
+
+    buys_by_year: dict[int, int] = {}
+    for t in trades:
+        if t.get("side") != "buy":
+            continue
+        y = _year_of_session(t["session"])
+        buys_by_year[y] = buys_by_year.get(y, 0) + 1
+
+    rows: list[dict[str, Any]] = []
+    for year in sorted(by_year):
+        chunk = by_year[year]
+        navs = [float(e["nav"]) for e in chunk]
+        if len(navs) < 2:
+            continue
+        total_return = navs[-1] / navs[0] - 1.0 if navs[0] else 0.0
+        n_days = max(len(navs), 1)
+        ann_return = (1.0 + total_return) ** (252 / n_days) - 1.0 if n_days > 1 else total_return
+        rets = _daily_returns(navs)
+        arr = np.asarray(rets, dtype=float)
+        vol = float(arr.std(ddof=1)) if len(arr) > 1 else 0.0
+        mean = float(arr.mean()) if len(arr) else 0.0
+        sharpe = (mean / vol * (252**0.5)) if vol > 1e-12 else 0.0
+
+        bench_total = None
+        excess = None
+        ann_excess = None
+        if panel is not None and benchmark:
+            sessions = [_as_date(e["session"]) for e in chunk]
+            b_rets = benchmark_series(panel, benchmark, sessions)
+            paired_p: list[float] = []
+            paired_b: list[float] = []
+            for i, pr in enumerate(rets):
+                br = b_rets[i + 1] if i + 1 < len(b_rets) else None
+                if br is None:
+                    continue
+                paired_p.append(pr)
+                paired_b.append(float(br))
+            if len(paired_b) >= 2:
+                p = np.asarray(paired_p, dtype=float)
+                b = np.asarray(paired_b, dtype=float)
+                port_total = float(np.prod(1.0 + p) - 1.0)
+                bench_total = float(np.prod(1.0 + b) - 1.0)
+                excess = port_total - bench_total
+                n = len(paired_p)
+                ann_excess = (1.0 + excess) ** (252 / max(n, 1)) - 1.0 if n > 1 else excess
+
+        rows.append(
+            {
+                "year": year,
+                "n_sessions": len(navs),
+                "n_trades": buys_by_year.get(year, 0),
+                "total_return": total_return,
+                "ann_return": ann_return,
+                "sharpe": sharpe,
+                "max_dd": _max_dd(navs),
+                "benchmark_total_return": bench_total,
+                "excess_return": excess,
+                "ann_excess": ann_excess,
+                "start_nav": navs[0],
+                "end_nav": navs[-1],
+            }
+        )
+    return rows
+
+
 def compute_extended_metrics(
     equity: list[dict],
     trades: list[dict],
@@ -251,5 +348,6 @@ def compute_extended_metrics(
     rel = relative_metrics(equity, panel, bench)
     turn = turnover_metrics(equity, trades)
     cap = capacity_metrics(trades, panel)
-    out = {**base, **rel, **turn, **cap}
+    yearly = yearly_breakdown(equity, trades, panel=panel, benchmark=bench)
+    out = {**base, **rel, **turn, **cap, "yearly": yearly}
     return out

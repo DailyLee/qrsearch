@@ -37,9 +37,65 @@ class RankBy(BaseModel):
     ascending: bool = True
 
 
+class CompositeComponent(BaseModel):
+    field: str
+    weight: float = 1.0
+    ascending: bool = True  # True => contribute -zscore (prefer lower raw values)
+
+
+class CompositeConfig(BaseModel):
+    enabled: bool = False
+    name: str = "composite_score"
+    components: list[CompositeComponent] = Field(default_factory=list)
+
+
 class SignalsConfig(BaseModel):
     filters: list[FilterRule] = Field(default_factory=list)
     rank_by: list[RankBy] = Field(default_factory=list)
+    composite: CompositeConfig = Field(default_factory=CompositeConfig)
+
+
+class FactorPreprocessConfig(BaseModel):
+    """Standalone factor prep (winsorize / industry / size / zscore). Default off."""
+
+    enabled: bool = False
+    steps: list[Literal["winsorize", "industry_neutral", "size_neutral", "zscore"]] = Field(
+        default_factory=lambda: ["winsorize", "industry_neutral", "size_neutral", "zscore"]
+    )
+    winsorize_q: float = 0.01
+    industry_field: str = "features.industry"
+    size_field: str = "features.total_mv"
+    cross_section: Literal["all", "date"] = "all"
+    min_group_size: int = 30
+    suffix: str = "__prep"
+
+
+class FactorsConfig(BaseModel):
+    include: list[str] = Field(default_factory=list)
+    exclude: list[str] = Field(
+        default_factory=lambda: [
+            "features.name",
+            "features.industry",
+            "features.support_levels",
+            "features.resistance_levels",
+            "features.outperform_index",
+            "features.stock_return",
+        ]
+    )
+    min_non_null: int = 100
+    n_quantiles: int = 5
+    icir_min_periods: int = 4
+    max_features: int | None = 32
+    quantile_horizon: int = 5
+    preprocess: FactorPreprocessConfig = Field(default_factory=FactorPreprocessConfig)
+
+
+class HypothesisConfig(BaseModel):
+    id: str | None = None
+    statement: str | None = None
+    expected_sign: dict[str, str] = Field(default_factory=dict)
+    parent_run: str | None = None
+    study_id: str | None = None  # links run report ↔ workspace/studies/<id>
 
 
 class PortfolioConfig(BaseModel):
@@ -68,10 +124,12 @@ class ExecutionConfig(BaseModel):
 
 
 class CostsConfig(BaseModel):
-    commission_rate: float = 0.00034
-    commission_min: float = 5.0
+    # A-share style defaults: 佣金万0.8 / 最低0；印花税万5（卖出）；过户等税费万0.1；滑点10bp
+    commission_rate: float = 0.00008
+    commission_min: float = 0.0
     stamp_duty_rate: float = 0.0005
-    slippage_bps: float = 20.0
+    transfer_fee_rate: float = 0.00001  # 税费/过户费，买卖双边
+    slippage_bps: float = 10.0
 
 
 class RiskConfig(BaseModel):
@@ -90,8 +148,9 @@ class RiskConfig(BaseModel):
 
 
 class AdjustmentConfig(BaseModel):
+    # qfq = PIT per-session forward adj (base = adj_factor on asof session; no window-end peek)
     mode: Literal["qfq", "hfq", "none"] = "qfq"
-    as_of: str | None = None  # YYYYMMDD; None => panel end
+    as_of: str | None = None  # unused for qfq PIT; retained for cache/debug labels only
 
 
 class BenchmarkConfig(BaseModel):
@@ -110,13 +169,15 @@ class WalkForwardConfig(BaseModel):
 class GatesConfig(BaseModel):
     min_oos_folds: int = 2
     min_trades: int = 10
-    min_oos_sharpe: float | None = None
-    max_oos_drawdown: float | None = None
+    # Economic defaults: prevent "structure-only pass" looking promotable
+    min_oos_sharpe: float | None = 0.0
+    max_oos_drawdown: float | None = 0.35
     # None = disclose only; set e.g. 0.0 to require deflated_sharpe >= threshold
     min_deflated_sharpe: float | None = None
     max_n_trials: int | None = None
     n_trials_assumed: int = 1
     pit_strict: bool = False
+    require_economic_for_promote: bool = True
 
 
 class ResearchConfig(BaseModel):
@@ -130,6 +191,8 @@ class ResearchConfig(BaseModel):
     benchmark: BenchmarkConfig = Field(default_factory=BenchmarkConfig)
     walk_forward: WalkForwardConfig = Field(default_factory=WalkForwardConfig)
     gates: GatesConfig = Field(default_factory=GatesConfig)
+    factors: FactorsConfig = Field(default_factory=FactorsConfig)
+    hypothesis: HypothesisConfig = Field(default_factory=HypothesisConfig)
     lookback_sessions: int = 5
     delay_buffer_sessions: int = 10
     suspend_buffer_sessions: int = 5
@@ -149,6 +212,7 @@ class AppSettings(BaseSettings):
     runs_dir: Path = Path("workspace/runs")
     packages_dir: Path = Path("workspace/models")  # promoted model packages
     cache_dir: Path = Path("workspace/cache")
+    studies_dir: Path = Path("workspace/studies")  # decision logs / study index
 
     def data_dir(self) -> Path:
         if self.zer0share_data:

@@ -14,11 +14,12 @@ alwaysApply: true
 - 无隐式 +1：延迟只用 `execution.lag_sessions`。
 - 领域词：`entry_intent_date` / `exit_intent_date` / `features.*`；CSV `buy_date`/`code` 仅 ingest alias。
 - 信号层状态无关；持仓配额在 `pretrade`；回测不依赖 CLI/HTML/Optuna。
+- **事件原始数据只读**：禁止修改/删除/覆盖 `workspace/events/**` 与 `workspace/events_ascii/**`（含 Shell 重定向写入）。仅允许 `--csv` 读取；衍生结果只写 `workspace/runs/`。由 `.cursor/hooks` 强制拦截。
 
 ## 改代码时
 
 - 最小改动；禁止搭车重构；新配置进 `config/models.py` 且带安全默认。
 - 改 `engines/backtest/**` 或成交/退出/涨跌停语义 → 必须补合成 panel 单测，并跑 `pytest -q`。
-- 勿覆盖唯一的 `configs/examples/*`；实验配置写 `configs/experiments/`。
+- 勿覆盖唯一的 `configs/examples/*`；实验配置写 `configs/experiments/`（落盘区，非知识库；勿通读历史实验当起点，除非用户指定或 study 决策链指向）。
 - 勿编造行情；缺数据就失败并提示同步 zer0share。
 - 破坏信封或 CLI 行为时同步 README / skill `reference.md`。

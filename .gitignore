@@ -30,3 +30,6 @@ workspace/*
 *.log
 optuna.db
 optuna*.db
+
+# Experiments
+configs/experiments/

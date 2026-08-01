@@ -9,6 +9,7 @@ from qresearch.engines.analysis.metrics import (
     compute_extended_metrics,
     relative_metrics,
     turnover_metrics,
+    yearly_breakdown,
 )
 from qresearch.engines.data.panel import PricePanel
 
@@ -104,3 +105,8 @@ def test_turnover_and_relative_ir():
     assert m["capacity"] in ("heuristic_adv", "unavailable")
     if m["capacity"] == "heuristic_adv":
         assert m["median_participation"] is not None
+    assert m.get("benchmark_nav_series")
+    assert len(m["benchmark_nav_series"]) == len(equity)
+    y = yearly_breakdown(equity, trades, panel=panel, benchmark="000852.SH")
+    assert y
+    assert "ann_return" in y[0]

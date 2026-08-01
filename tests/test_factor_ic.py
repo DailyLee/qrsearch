@@ -7,7 +7,12 @@ import polars as pl
 import pytest
 
 from qresearch.engines.data.panel import PricePanel
-from qresearch.engines.factor.ic import compute_ic_table, shuffle_date_ic, spearman_ic
+from qresearch.engines.factor.ic import (
+    compute_alpha_beta_table,
+    compute_ic_table,
+    shuffle_date_ic,
+    spearman_ic,
+)
 
 
 def test_spearman_ic_perfect_and_short():
@@ -91,6 +96,49 @@ def test_compute_ic_table_missing_feature_returns_empty():
     table = compute_ic_table(events, panel, ["features.absent"], horizons=[3])
     assert table.height == 0
     assert set(table.columns) == {"feature", "horizon", "n", "rank_ic"}
+
+
+def test_compute_alpha_beta_table_vs_benchmark():
+    panel, sessions = _mono_panel(n=16)
+    # add flat-ish benchmark so stock drift → positive alpha / excess IC
+    extra = []
+    for i, s in enumerate(sessions):
+        close = 100.0 * (1.0 + 0.001 * i)
+        extra.append(
+            {
+                "instrument": "000852.SH",
+                "trade_date": s,
+                "open": close,
+                "high": close,
+                "low": close,
+                "close": close,
+                "vol": 1.0,
+                "amount": 1.0,
+            }
+        )
+    bars = pl.concat([panel.bars, pl.DataFrame(extra)])
+    panel.bars = bars
+    panel.instruments = sorted(set(panel.instruments) | {"000852.SH"})
+    panel.build_index()
+
+    events = pl.DataFrame(
+        {
+            "instrument": ["AAA001.SZ", "AAA002.SZ", "AAA003.SZ"] * 3,
+            "entry_intent_date": [sessions[1]] * 3 + [sessions[2]] * 3 + [sessions[3]] * 3,
+            "features.score": [3.0, 2.0, 1.0] * 3,
+        }
+    )
+    ab = compute_alpha_beta_table(
+        events, panel, ["features.score"], [5], benchmark="000852.SH"
+    )
+    assert ab.height == 1
+    row = ab.to_dicts()[0]
+    assert row["n"] >= 3
+    assert row["benchmark"] == "000852.SH"
+    assert row["ols_alpha"] == row["ols_alpha"]  # not NaN
+    assert row["ols_beta"] == row["ols_beta"]
+    assert "top_bottom_excess" in row
+    assert abs(row["rank_ic_excess"]) > 0 or abs(row["rank_ic"]) > 0
 
 
 def test_shuffle_date_ic_changes_signal():

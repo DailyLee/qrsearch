@@ -78,4 +78,7 @@ def rank_events(events: pl.DataFrame, signals: SignalsConfig) -> pl.DataFrame:
 
 
 def build_ranked(events: pl.DataFrame, config: ResearchConfig) -> pl.DataFrame:
-    return rank_events(events, config.signals)
+    from qresearch.engines.signal.composite import apply_composite
+
+    enriched = apply_composite(events, config.signals.composite)
+    return rank_events(enriched, config.signals)

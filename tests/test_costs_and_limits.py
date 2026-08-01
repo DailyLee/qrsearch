@@ -7,13 +7,30 @@ import pytest
 from qresearch.config.models import CostsConfig
 from qresearch.engines.backtest.costs import buy_cost, commission, sell_cost
 from qresearch.engines.data.limitbook import LimitBook
+from qresearch.engines.risk.pretrade import Intent, select_buy_intents
 from qresearch.engines.risk.state import PortfolioState, Position
 
 
 def test_commission_respects_minimum():
-    costs = CostsConfig(commission_rate=0.00034, commission_min=5.0, slippage_bps=0.0)
+    costs = CostsConfig(
+        commission_rate=0.00034, commission_min=5.0, transfer_fee_rate=0.0, slippage_bps=0.0
+    )
     assert commission(1_000.0, costs) == 5.0  # 0.34 < 5
     assert commission(100_000.0, costs) == pytest.approx(34.0)
+
+
+def test_default_costs_match_broker_spec():
+    costs = CostsConfig()
+    assert costs.commission_rate == pytest.approx(0.00008)
+    assert costs.commission_min == 0.0
+    assert costs.stamp_duty_rate == pytest.approx(0.0005)
+    assert costs.transfer_fee_rate == pytest.approx(0.00001)
+    assert costs.slippage_bps == pytest.approx(10.0)
+    notional = 100_000.0
+    # buy: 8 + 100 slip + 1 transfer = 109
+    assert buy_cost(notional, costs) == pytest.approx(109.0)
+    # sell: 8 + 100 + 50 stamp + 1 transfer = 159
+    assert sell_cost(notional, costs) == pytest.approx(159.0)
 
 
 def test_commission_and_costs_with_slip_and_stamp():
@@ -21,6 +38,7 @@ def test_commission_and_costs_with_slip_and_stamp():
         commission_rate=0.001,
         commission_min=0.0,
         stamp_duty_rate=0.001,
+        transfer_fee_rate=0.0,
         slippage_bps=10.0,  # 0.1%
     )
     notional = 10_000.0
@@ -66,7 +84,6 @@ def test_portfolio_state_nav_and_names():
 
 def test_select_buy_intents_rejects_already_held_and_quota(panel, sessions):
     from qresearch.config.models import PortfolioConfig
-    from qresearch.engines.risk.pretrade import Intent, select_buy_intents
 
     intents = [
         Intent(

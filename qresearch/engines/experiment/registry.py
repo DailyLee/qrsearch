@@ -14,7 +14,8 @@ from qresearch import __version__
 
 
 def new_run_id() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")[:-3]
+    """Local time YYYYMMDD_HHMMSS_mmm so folders sort and read with clock time."""
+    return datetime.now().astimezone().strftime("%Y%m%d_%H%M%S_%f")[:-3]
 
 
 class RunWriter:

@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
+import polars as pl
 import typer
 from dotenv import load_dotenv
 
@@ -19,14 +20,22 @@ from qresearch.config import get_settings, load_research_config
 from qresearch.engines.analysis.report import write_report_from_run
 from qresearch.engines.data.ingest import IngestError, load_events, validate_events
 from qresearch.engines.data.vendor import VendorError, ping_vendor
+from qresearch.engines.experiment.decision_log import list_decisions, write_decision
 from qresearch.engines.experiment.promote import promote_run
-from qresearch.engines.experiment.registry import archive_run, list_runs, load_run_meta
+from qresearch.engines.experiment.registry import RunWriter, archive_run, list_runs, load_run_meta
 from qresearch.engines.experiment.walkforward import run_walk_forward
 from qresearch.engines.data.panel import load_price_panel
 from qresearch.engines.factor.ic import compute_ic_table
+from qresearch.engines.factor.preprocess import apply_factor_preprocess
+from qresearch.engines.factor.universe import resolve_feature_cols
 from qresearch.engines.ops.runner import run_ops
 from qresearch.io.envelope import ExitCode, ResultEnvelope, emit, fail_envelope, utc_now_iso
-from qresearch.pipeline import pipeline_optimize, pipeline_research
+from qresearch.pipeline import (
+    pipeline_factor_compare,
+    pipeline_optimize,
+    pipeline_research,
+    pipeline_sensitivity,
+)
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 data_app = typer.Typer(no_args_is_help=True)
@@ -37,6 +46,7 @@ analyze_app = typer.Typer(no_args_is_help=True)
 runs_app = typer.Typer(no_args_is_help=True)
 ops_app = typer.Typer(no_args_is_help=True)
 validate_app = typer.Typer(no_args_is_help=True)
+study_app = typer.Typer(no_args_is_help=True)
 
 app.add_typer(data_app, name="data")
 app.add_typer(pipeline_app, name="pipeline")
@@ -46,6 +56,7 @@ app.add_typer(analyze_app, name="analyze")
 app.add_typer(runs_app, name="runs")
 app.add_typer(ops_app, name="ops")
 app.add_typer(validate_app, name="validate")
+app.add_typer(study_app, name="study")
 
 # mutable CLI output prefs; accept --format/--quiet anywhere in argv
 _CLI = {"format": "json", "quiet": False}
@@ -258,6 +269,45 @@ def pipeline_optimize_cmd(
         _out(env, int(code))
 
 
+@pipeline_app.command("sensitivity")
+def pipeline_sensitivity_cmd(
+    csv: list[str] = typer.Option(..., "--csv"),
+    config: Optional[str] = typer.Option(None, "--config"),
+    cost_mult: str = typer.Option("1,1.5,2", "--cost-mult"),
+    stop: str = typer.Option("-0.05,-0.086,-0.12", "--stop"),
+    take: str = typer.Option("0.10,0.158,0.20", "--take"),
+    max_grid: int = typer.Option(27, "--max-grid"),
+):
+    """Cost / stop / take-profit sensitivity grid (no promote)."""
+    started = utc_now_iso()
+    t0 = time.time()
+    try:
+        result = pipeline_sensitivity(
+            csv,
+            config,
+            cost_mult=cost_mult,
+            stop=stop,
+            take=take,
+            max_grid=max_grid,
+        )
+        env = ResultEnvelope(
+            command="pipeline.sensitivity",
+            started_at=started,
+            finished_at=utc_now_iso(),
+            elapsed_ms=int((time.time() - t0) * 1000),
+            run_id=result["run_id"],
+            summary=result["summary"],
+            artifacts=result["artifacts"],
+            next_actions=result["next_actions"],
+        )
+        _out(env)
+    except Exception as e:
+        env, code = fail_envelope(
+            "pipeline.sensitivity", started, code="error", message=str(e), exit_code=ExitCode.ERROR
+        )
+        _out(env, int(code))
+
+
 @validate_app.command("rolling")
 def validate_rolling(
     csv: list[str] = typer.Option(..., "--csv"),
@@ -312,26 +362,93 @@ def factor_ic(
         _out(env, int(code))
 
 
-@factor_app.command("compare")
-def factor_compare(
+@factor_app.command("preprocess")
+def factor_preprocess(
     csv: list[str] = typer.Option(..., "--csv"),
     config: Optional[str] = typer.Option(None, "--config"),
 ):
+    """Run decoupled factor preprocess and persist prepared events + report."""
     started = utc_now_iso()
     try:
         settings = get_settings()
         cfg = load_research_config(config)
+        # Force-enable for this command even if YAML has enabled:false
+        prep_cfg = cfg.factors.preprocess.model_copy(update={"enabled": True})
         events = load_events(csv, cfg)
-        panel = load_price_panel(events, cfg, cache_dir=settings.cache_dir / "prices")
-        feats = [c for c in events.columns if c.startswith("features.")]
-        ic = compute_ic_table(events, panel, feats, cfg.ic_horizons)
+        feats = resolve_feature_cols(events, cfg.factors)
+        out_events, report = apply_factor_preprocess(events, feats, prep_cfg)
+        writer = RunWriter(settings.runs_dir)
+        writer.write_config_snapshot(cfg)
+        out_events.write_parquet(writer.artifact_path("events_preprocessed.parquet"))
+        writer.write_json("artifacts/preprocess_report.json", report)
+        writer.write_meta(
+            {
+                "command": "factor.preprocess",
+                "n_events": events.height,
+                "n_input_features": len(feats),
+                "n_output_features": len(report.get("output_features") or []),
+            }
+        )
+        env = ResultEnvelope(
+            command="factor.preprocess",
+            started_at=started,
+            finished_at=utc_now_iso(),
+            run_id=writer.run_id,
+            summary={
+                "n_events": events.height,
+                "features": feats,
+                "features_prepped": report.get("output_features") or [],
+                "preprocess": report,
+            },
+            artifacts={
+                "run_dir": str(writer.root),
+                "events_preprocessed": str(writer.artifact_path("events_preprocessed.parquet")),
+                "preprocess_report": str(writer.artifact_path("preprocess_report.json")),
+            },
+        )
+        _out(env)
+    except Exception as e:
+        env, code = fail_envelope(
+            "factor.preprocess", started, code="error", message=str(e), exit_code=ExitCode.ERROR
+        )
+        _out(env, int(code))
+
+
+@factor_app.command("compare")
+def factor_compare(
+    csv: list[str] = typer.Option(..., "--csv"),
+    config: Optional[str] = typer.Option(None, "--config"),
+    run_id: Optional[str] = typer.Option(None, "--run-id"),
+):
+    started = utc_now_iso()
+    t0 = time.time()
+    try:
+        result = pipeline_factor_compare(csv, config, run_id=run_id)
         env = ResultEnvelope(
             command="factor.compare",
             started_at=started,
             finished_at=utc_now_iso(),
-            summary={"n_features": len(feats), "rows": ic.to_dicts()[:100]},
+            elapsed_ms=int((time.time() - t0) * 1000),
+            run_id=result["run_id"],
+            summary=result["summary"],
+            artifacts=result["artifacts"],
+            next_actions=result["next_actions"],
         )
         _out(env)
+    except IngestError as e:
+        env, code = fail_envelope(
+            "factor.compare", started, code="data", message=str(e), exit_code=ExitCode.DATA
+        )
+        _out(env, int(code))
+    except VendorError as e:
+        env, code = fail_envelope(
+            "factor.compare",
+            started,
+            code="dependency",
+            message=str(e),
+            exit_code=ExitCode.DEPENDENCY,
+        )
+        _out(env, int(code))
     except Exception as e:
         env, code = fail_envelope(
             "factor.compare", started, code="error", message=str(e), exit_code=ExitCode.ERROR
@@ -554,6 +671,94 @@ def runs_archive(
         finished_at=utc_now_iso(),
         run_id=run,
         artifacts={"archive": str(path)},
+    )
+    _out(env)
+
+
+@study_app.command("decision")
+def study_decision(
+    study: str = typer.Option(..., "--study", help="study id, e.g. plat_box_2019_2025"),
+    stage: str = typer.Option(
+        ...,
+        "--stage",
+        help="factor_analysis|strategy_design|backtest_train|sensitivity|optimize|holdout|full_sample|promote|other",
+    ),
+    summary: str = typer.Option(..., "--summary", help="one-line result / decision"),
+    rationale: str = typer.Option(..., "--rationale", help="why this decision"),
+    evidence: Optional[str] = typer.Option(
+        None, "--evidence", help="JSON object string or path to .json file"
+    ),
+    run: Optional[str] = typer.Option(None, "--run", help="related run_id"),
+    config: Optional[str] = typer.Option(None, "--config", help="YAML path"),
+    next_action: Optional[str] = typer.Option(None, "--next-action"),
+):
+    """Archive a stage decision (factor / strategy / backtest) for audit trail."""
+    started = utc_now_iso()
+    settings = get_settings()
+    ev: dict = {}
+    if evidence:
+        p = Path(evidence)
+        try:
+            if p.exists():
+                ev = json.loads(p.read_text(encoding="utf-8"))
+            else:
+                ev = json.loads(evidence)
+        except json.JSONDecodeError as e:
+            env, code = fail_envelope(
+                "study.decision",
+                started,
+                code="config",
+                message=f"invalid --evidence JSON: {e}",
+                exit_code=ExitCode.CONFIG,
+            )
+            _out(env, int(code))
+    try:
+        out = write_decision(
+            settings.studies_dir,
+            study_id=study,
+            stage=stage,
+            summary=summary,
+            rationale=rationale,
+            evidence=ev,
+            run_id=run,
+            config_path=config,
+            next_action=next_action,
+            runs_dir=settings.runs_dir,
+        )
+        arts = {
+            "md": out["md_path"],
+            "json": out["json_path"],
+            "index": out["index_path"],
+        }
+        if out.get("run_mirror"):
+            arts["run_decisions"] = out["run_mirror"].get("json_path") or ""
+            arts["run_report"] = out["run_mirror"].get("report_zh") or ""
+        env = ResultEnvelope(
+            command="study.decision",
+            started_at=started,
+            finished_at=utc_now_iso(),
+            run_id=run,
+            summary=out,
+            artifacts=arts,
+        )
+        _out(env)
+    except Exception as e:
+        env, code = fail_envelope(
+            "study.decision", started, code="error", message=str(e), exit_code=ExitCode.ERROR
+        )
+        _out(env, int(code))
+
+
+@study_app.command("list")
+def study_list(study: str = typer.Option(..., "--study")):
+    started = utc_now_iso()
+    settings = get_settings()
+    rows = list_decisions(settings.studies_dir, study)
+    env = ResultEnvelope(
+        command="study.list",
+        started_at=started,
+        finished_at=utc_now_iso(),
+        summary={"study_id": study, "n": len(rows), "decisions": rows},
     )
     _out(env)
 

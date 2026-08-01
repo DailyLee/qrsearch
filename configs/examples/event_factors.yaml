@@ -35,10 +35,11 @@ execution:
     ref: decision_prior_close
 
 costs:
-  commission_rate: 0.00034
-  commission_min: 5.0
-  stamp_duty_rate: 0.0005
-  slippage_bps: 20.0
+  commission_rate: 0.00008   # 万0.8
+  commission_min: 0.0
+  stamp_duty_rate: 0.0005    # 印花税万5（卖出）
+  transfer_fee_rate: 0.00001 # 税费/过户费万0.1（买卖）
+  slippage_bps: 10.0
 
 risk:
   stop_loss: -0.086
@@ -51,11 +52,34 @@ adjustment:
 benchmark:
   instrument: "000852.SH"
 
+hypothesis:
+  id: example_event_factors
+  statement: "Template only; replace with evidence-backed hypothesis before research conclusions."
+
 gates:
   min_oos_folds: 2
   min_trades: 10
   n_trials_assumed: 1
-  # min_deflated_sharpe: 0.0   # uncomment to gate on trial-adjusted Sharpe
+  min_oos_sharpe: 0.0
+  max_oos_drawdown: 0.35
+  require_economic_for_promote: true
+  # min_deflated_sharpe: 0.0
   # pit_strict: false
+
+factors:
+  min_non_null: 50
+  max_features: 32
+  n_quantiles: 5
+  quantile_horizon: 5
+  # Decoupled prep for factor diagnostics only (signals/backtest stay on raw features)
+  preprocess:
+    enabled: false
+    steps: [winsorize, industry_neutral, size_neutral, zscore]
+    winsorize_q: 0.01
+    industry_field: features.industry
+    size_field: features.total_mv
+    cross_section: all   # or date
+    min_group_size: 30
+    suffix: __prep
 
 ic_horizons: [1, 5, 10, 20]

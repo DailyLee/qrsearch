@@ -53,7 +53,10 @@ def test_summarize_trades_and_chinese_html(tmp_path: Path):
     assert 0 < stats["win_rate"] < 1
 
     cfg = ResearchConfig()
-    gates = evaluate_gates({"n_trades": 2, "sharpe": 1.0, "max_dd": -0.1}, cfg.gates, n_oos_folds=0)
+    gates = evaluate_gates(
+        {"n_trades": 20, "sharpe": 1.0, "max_dd": -0.1}, cfg.gates, n_oos_folds=2
+    )
+    assert gates["promotable"] is True
     conclusion = build_conclusion(
         run_id="demo_run",
         config=cfg,

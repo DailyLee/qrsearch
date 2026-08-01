@@ -9,7 +9,7 @@ from qresearch.engines.analysis.pit_audit import run_pit_audit
 from qresearch.engines.data.panel import PricePanel
 
 
-def test_pit_audit_warns_on_window_end_adj_and_passes_decision_order():
+def test_pit_audit_reports_session_pit_and_passes_decision_order():
     sessions = [date(2025, 1, 2) + timedelta(days=i) for i in range(5)]
     events = pl.DataFrame(
         {
@@ -57,9 +57,9 @@ def test_pit_audit_warns_on_window_end_adj_and_passes_decision_order():
     panel.build_index()
     audit = run_pit_audit(events, panel, ResearchConfig(), strict=False)
     assert audit["status"] in ("pass", "warn")
-    assert audit["adjustment"]["methodology"] == "qfq_window_end"
-    assert audit["adjustment"]["full_pit_adj_factor_asof_session"] is False
-    assert "adjustment_is_qfq_window_end_not_full_pit" in audit["warnings"]
+    assert audit["adjustment"]["methodology"] == "qfq_session_pit"
+    assert audit["adjustment"]["full_pit_adj_factor_asof_session"] is True
+    assert "adjustment_is_qfq_window_end_not_full_pit" not in audit["warnings"]
     assert not any(c["id"] == "decision_before_entry" and c["status"] == "fail" for c in audit["checks"])
 
 

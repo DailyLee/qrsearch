@@ -96,7 +96,7 @@ Research quality knobs in YAML `gates`: `n_trials_assumed`, `min_deflated_sharpe
 
 ```
 qr data ping | validate-events | clear-cache
-qr pipeline research|optimize
+qr pipeline research|optimize|sensitivity
 qr validate rolling
 qr factor ic|compare
 qr backtest run

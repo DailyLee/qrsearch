@@ -25,26 +25,50 @@ def evaluate_gates(
     n_oos_folds: int = 0,
     pit_status: str | None = None,
 ) -> dict[str, Any]:
-    reasons = []
+    """Split structural vs economic gates.
+
+    - passed / structural_passed: research may continue
+    - promotable: structural AND economic (when require_economic_for_promote)
+    """
+    structural_reasons: list[str] = []
+    economic_reasons: list[str] = []
+
     if n_oos_folds < gates.min_oos_folds:
-        reasons.append(f"oos_folds<{gates.min_oos_folds}")
+        structural_reasons.append(f"oos_folds<{gates.min_oos_folds}")
     if int(metrics.get("n_trades") or 0) < gates.min_trades:
-        reasons.append(f"trades<{gates.min_trades}")
+        structural_reasons.append(f"trades<{gates.min_trades}")
+    if gates.max_n_trials is not None and int(metrics.get("n_trials") or 1) > int(gates.max_n_trials):
+        structural_reasons.append("n_trials_above_max")
+    if gates.pit_strict and pit_status == "fail":
+        structural_reasons.append("pit_audit_fail")
+
     if gates.min_oos_sharpe is not None and float(metrics.get("sharpe") or 0) < gates.min_oos_sharpe:
-        reasons.append("sharpe_below_min")
+        economic_reasons.append("sharpe_below_min")
     if gates.max_oos_drawdown is not None and abs(float(metrics.get("max_dd") or 0)) > abs(
         gates.max_oos_drawdown
     ):
-        reasons.append("drawdown_above_max")
+        economic_reasons.append("drawdown_above_max")
     if gates.min_deflated_sharpe is not None:
         dsr = metrics.get("deflated_sharpe")
         if dsr is None or float(dsr) < float(gates.min_deflated_sharpe):
-            reasons.append("deflated_sharpe_below_min")
-    if gates.max_n_trials is not None and int(metrics.get("n_trials") or 1) > int(gates.max_n_trials):
-        reasons.append("n_trials_above_max")
-    if gates.pit_strict and pit_status == "fail":
-        reasons.append("pit_audit_fail")
-    return {"passed": len(reasons) == 0, "reasons": reasons, "promotable": len(reasons) == 0}
+            economic_reasons.append("deflated_sharpe_below_min")
+
+    structural_passed = len(structural_reasons) == 0
+    economic_passed = len(economic_reasons) == 0
+    reasons = structural_reasons + economic_reasons
+    if gates.require_economic_for_promote:
+        promotable = structural_passed and economic_passed
+    else:
+        promotable = structural_passed
+    return {
+        "structural_passed": structural_passed,
+        "economic_passed": economic_passed,
+        "passed": structural_passed,
+        "promotable": promotable,
+        "reasons": reasons,
+        "structural_reasons": structural_reasons,
+        "economic_reasons": economic_reasons,
+    }
 
 
 def build_conclusion(
@@ -60,13 +84,15 @@ def build_conclusion(
     pit_audit: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
-        "schema_version": "1.2",
+        "schema_version": "1.4",
         "locale": "zh-CN",
         "title": "量化研究报告",
         "run_id": run_id,
+        "study_id": config.hypothesis.study_id,
         "promotable": bool(gates_result.get("promotable")),
         "gates": gates_result,
         "gates_cfg": config.gates.model_dump(),
+        "hypothesis": config.hypothesis.model_dump(),
         "n_events": n_events,
         "metrics": metrics,
         "signals": config.signals.model_dump(),
@@ -82,6 +108,7 @@ def build_conclusion(
         "pit_audit": pit_audit,
         "overfit": metrics.get("overfit"),
         "behavior_subset": [],
+        "decisions": [],
     }
 
 
@@ -217,45 +244,156 @@ def summarize_equity(equity: list[dict[str, Any]] | pl.DataFrame | None) -> dict
     }
 
 
-def equity_to_svg(equity: list[dict[str, Any]] | pl.DataFrame | None, *, width: int = 960, height: int = 260) -> str:
+def _equity_rows(equity: list[dict[str, Any]] | pl.DataFrame | None) -> list[dict[str, Any]]:
     if equity is None:
-        return ""
+        return []
     if isinstance(equity, pl.DataFrame):
-        rows = equity.to_dicts()
-    else:
-        rows = list(equity)
+        return equity.to_dicts()
+    return list(equity)
+
+
+def equity_to_svg(
+    equity: list[dict[str, Any]] | pl.DataFrame | None,
+    *,
+    width: int = 960,
+    height: int = 260,
+    bench_navs: list[float] | None = None,
+) -> str:
+    rows = _equity_rows(equity)
     if len(rows) < 2:
         return ""
     navs = [_safe_float(r.get("nav")) or 0.0 for r in rows]
-    lo, hi = min(navs), max(navs)
+    # Normalize to 1.0 for overlay readability when benchmark present
+    if bench_navs and len(bench_navs) == len(navs) and navs[0] > 0 and bench_navs[0] > 0:
+        series_a = [n / navs[0] for n in navs]
+        series_b = [n / bench_navs[0] for n in bench_navs]
+        lo = min(min(series_a), min(series_b))
+        hi = max(max(series_a), max(series_b))
+        label_hi, label_lo = f"{hi:.2f}", f"{lo:.2f}"
+        aria = "策略 vs 基准（归一化净值）"
+    else:
+        series_a = navs
+        series_b = None
+        lo, hi = min(navs), max(navs)
+        label_hi, label_lo = f"{hi:,.0f}", f"{lo:,.0f}"
+        aria = "净值曲线"
     span = (hi - lo) or 1.0
     pad_l, pad_r, pad_t, pad_b = 48, 16, 16, 36
     plot_w = width - pad_l - pad_r
     plot_h = height - pad_t - pad_b
 
     def xy(i: int, nav: float) -> tuple[float, float]:
-        x = pad_l + plot_w * i / (len(navs) - 1)
+        x = pad_l + plot_w * i / (len(series_a) - 1)
         y = pad_t + plot_h * (1 - (nav - lo) / span)
         return x, y
 
-    pts = [xy(i, n) for i, n in enumerate(navs)]
+    pts = [xy(i, n) for i, n in enumerate(series_a)]
     poly = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
     area = f"{pad_l:.1f},{pad_t + plot_h:.1f} " + poly + f" {pad_l + plot_w:.1f},{pad_t + plot_h:.1f}"
-    y0 = pad_t + plot_h * (1 - (navs[0] - lo) / span)
+    y0 = pad_t + plot_h * (1 - (series_a[0] - lo) / span)
     start_lbl = str(rows[0].get("session") or "")
     end_lbl = str(rows[-1].get("session") or "")
-    return f"""<svg class="equity" viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="净值曲线">
+    bench_poly = ""
+    if series_b is not None:
+        bpts = [xy(i, n) for i, n in enumerate(series_b)]
+        bench_poly = (
+            f'<polyline points="{" ".join(f"{x:.1f},{y:.1f}" for x, y in bpts)}" '
+            f'fill="none" stroke="#9a6700" stroke-width="1.8" stroke-dasharray="5 3"/>'
+        )
+    return f"""<svg class="equity" viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="{aria}">
   <rect x="0" y="0" width="{width}" height="{height}" fill="#fbfdff"/>
   <line x1="{pad_l}" y1="{pad_t}" x2="{pad_l}" y2="{pad_t + plot_h}" stroke="#d8e0ea"/>
   <line x1="{pad_l}" y1="{pad_t + plot_h}" x2="{pad_l + plot_w}" y2="{pad_t + plot_h}" stroke="#d8e0ea"/>
   <line x1="{pad_l}" y1="{y0:.1f}" x2="{pad_l + plot_w}" y2="{y0:.1f}" stroke="#c5d0dc" stroke-dasharray="4 4"/>
   <polygon points="{area}" fill="#0b5cab22"/>
   <polyline points="{poly}" fill="none" stroke="#0b5cab" stroke-width="2.2"/>
+  {bench_poly}
   <text x="{pad_l}" y="{height - 10}" fill="#5b6b7c" font-size="11">{start_lbl}</text>
   <text x="{pad_l + plot_w}" y="{height - 10}" fill="#5b6b7c" font-size="11" text-anchor="end">{end_lbl}</text>
-  <text x="8" y="{pad_t + 10}" fill="#5b6b7c" font-size="11">{hi:,.0f}</text>
-  <text x="8" y="{pad_t + plot_h}" fill="#5b6b7c" font-size="11">{lo:,.0f}</text>
+  <text x="8" y="{pad_t + 10}" fill="#5b6b7c" font-size="11">{label_hi}</text>
+  <text x="8" y="{pad_t + plot_h}" fill="#5b6b7c" font-size="11">{label_lo}</text>
 </svg>"""
+
+
+def drawdown_to_svg(equity: list[dict[str, Any]] | pl.DataFrame | None, *, width: int = 960, height: int = 180) -> str:
+    rows = _equity_rows(equity)
+    if len(rows) < 2:
+        return ""
+    navs = [_safe_float(r.get("nav")) or 0.0 for r in rows]
+    peak = navs[0]
+    dds: list[float] = []
+    for n in navs:
+        peak = max(peak, n)
+        dds.append(n / peak - 1.0 if peak > 0 else 0.0)
+    lo, hi = min(dds), 0.0
+    span = (hi - lo) or 1.0
+    pad_l, pad_r, pad_t, pad_b = 48, 16, 16, 28
+    plot_w = width - pad_l - pad_r
+    plot_h = height - pad_t - pad_b
+
+    def xy(i: int, dd: float) -> tuple[float, float]:
+        x = pad_l + plot_w * i / (len(dds) - 1)
+        y = pad_t + plot_h * (1 - (dd - lo) / span)
+        return x, y
+
+    pts = [xy(i, d) for i, d in enumerate(dds)]
+    poly = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
+    area = f"{pad_l:.1f},{pad_t:.1f} " + poly + f" {pad_l + plot_w:.1f},{pad_t:.1f}"
+    return f"""<svg class="equity" viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="回撤曲线">
+  <rect x="0" y="0" width="{width}" height="{height}" fill="#fffaf8"/>
+  <line x1="{pad_l}" y1="{pad_t}" x2="{pad_l}" y2="{pad_t + plot_h}" stroke="#d8e0ea"/>
+  <line x1="{pad_l}" y1="{pad_t}" x2="{pad_l + plot_w}" y2="{pad_t}" stroke="#d8e0ea"/>
+  <polygon points="{area}" fill="#b4231822"/>
+  <polyline points="{poly}" fill="none" stroke="#b42318" stroke-width="2"/>
+  <text x="8" y="{pad_t + 10}" fill="#5b6b7c" font-size="11">0%</text>
+  <text x="8" y="{pad_t + plot_h}" fill="#5b6b7c" font-size="11">{lo * 100:.1f}%</text>
+</svg>"""
+
+
+def yearly_bars_to_svg(yearly: list[dict[str, Any]] | None, *, width: int = 960, height: int = 240) -> str:
+    rows = list(yearly or [])
+    if not rows:
+        return ""
+    vals_p = [_safe_float(r.get("ann_return")) or 0.0 for r in rows]
+    vals_e = [_safe_float(r.get("ann_excess")) for r in rows]
+    has_excess = any(v is not None for v in vals_e)
+    vals_e_f = [v if v is not None else 0.0 for v in vals_e]
+    all_v = vals_p + (vals_e_f if has_excess else [])
+    lo, hi = min(min(all_v), 0.0), max(max(all_v), 0.0)
+    span = (hi - lo) or 1.0
+    pad_l, pad_r, pad_t, pad_b = 48, 16, 20, 40
+    plot_w = width - pad_l - pad_r
+    plot_h = height - pad_t - pad_b
+    n = len(rows)
+    group_w = plot_w / max(n, 1)
+    bar_w = group_w * (0.28 if has_excess else 0.5)
+    zero_y = pad_t + plot_h * (1 - (0.0 - lo) / span)
+    parts = [
+        f'<svg class="equity" viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="分年年化">',
+        f'<rect x="0" y="0" width="{width}" height="{height}" fill="#fbfdff"/>',
+        f'<line x1="{pad_l}" y1="{zero_y:.1f}" x2="{pad_l + plot_w}" y2="{zero_y:.1f}" stroke="#c5d0dc"/>',
+    ]
+    for i, r in enumerate(rows):
+        cx = pad_l + group_w * (i + 0.5)
+        series = [(vals_p[i], "#0b5cab")]
+        if has_excess:
+            series.append((vals_e_f[i], "#1b7f4a" if vals_e_f[i] >= 0 else "#b42318"))
+        for j, (val, color) in enumerate(series):
+            y_val = pad_t + plot_h * (1 - (val - lo) / span)
+            y = min(y_val, zero_y)
+            h = abs(zero_y - y_val)
+            if has_excess:
+                x = cx - bar_w - 1.0 + j * (bar_w + 2.0)
+            else:
+                x = cx - bar_w / 2
+            parts.append(
+                f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_w:.1f}" height="{max(h, 1):.1f}" fill="{color}" opacity="0.85"/>'
+            )
+        parts.append(
+            f'<text x="{cx:.1f}" y="{height - 12}" fill="#5b6b7c" font-size="11" text-anchor="middle">{r.get("year")}</text>'
+        )
+    parts.append("</svg>")
+    return "\n".join(parts)
 
 
 def _gate_reason_zh(reason: str) -> str:
@@ -394,7 +532,16 @@ def enrich_conclusion(
     eq_summary = summarize_equity(equity)
     if eq_summary:
         out["equity_summary"] = eq_summary
-    out["equity_svg"] = equity_to_svg(equity)
+    metrics = out.get("metrics") or {}
+    bench_nav = metrics.get("benchmark_nav_series")
+    if isinstance(bench_nav, list) and bench_nav:
+        out["equity_svg"] = equity_to_svg(equity, bench_navs=[float(x) for x in bench_nav])
+    else:
+        out["equity_svg"] = equity_to_svg(equity)
+    out["drawdown_svg"] = drawdown_to_svg(equity)
+    yearly = metrics.get("yearly") or out.get("yearly") or []
+    out["yearly"] = yearly
+    out["yearly_svg"] = yearly_bars_to_svg(yearly)
 
     out["reject_stats"] = summarize_rejects(rejects)
 
@@ -407,6 +554,7 @@ def enrich_conclusion(
     reasons = list((out.get("gates") or {}).get("reasons") or [])
     out["gate_reasons"] = [_gate_reason_zh(r) for r in reasons]
     out["artifact_links"] = artifact_links or {}
+    out["decisions"] = list(out.get("decisions") or [])
     return out
 
 
@@ -438,6 +586,18 @@ def load_run_artifacts(run_dir: Path) -> dict[str, Any]:
     pit_audit = _load_json(art / "pit_audit.json")
     meta = _load_json(run_dir / "meta.json") or {}
     cfg = _load_config_snapshot(run_dir) or {}
+    from qresearch.config import get_settings
+    from qresearch.engines.experiment.decision_log import load_decisions_for_report
+
+    settings = get_settings()
+    study_id = (
+        meta.get("study_id")
+        or (cfg.get("hypothesis") or {}).get("study_id")
+        or None
+    )
+    decisions = load_decisions_for_report(
+        run_dir, studies_dir=settings.studies_dir, study_id=study_id
+    )
     return {
         "trades": trades,
         "equity": equity,
@@ -448,6 +608,8 @@ def load_run_artifacts(run_dir: Path) -> dict[str, Any]:
         "pit_audit": pit_audit,
         "meta": meta,
         "config": cfg,
+        "study_id": study_id,
+        "decisions": decisions,
         "paths": {
             "run_dir": str(run_dir),
             "trades": str(trades_path) if trades_path.exists() else "",
@@ -463,6 +625,10 @@ def load_run_artifacts(run_dir: Path) -> dict[str, Any]:
             if (art / "rejects_summary.json").exists()
             else "",
             "config": str(run_dir / "config.snapshot.yaml"),
+            "decisions": str(run_dir / "decisions") if (run_dir / "decisions").exists() else "",
+            "study_index": str(settings.studies_dir / study_id / "INDEX.md")
+            if study_id
+            else "",
         },
     }
 
@@ -492,6 +658,10 @@ def build_conclusion_from_run(run_dir: Path, base: dict[str, Any] | None = None)
         "locale": "zh-CN",
         "title": "量化研究报告",
         "run_id": existing.get("run_id") or meta.get("run_id") or run_dir.name,
+        "study_id": existing.get("study_id")
+        or loaded.get("study_id")
+        or meta.get("study_id")
+        or (cfg.get("hypothesis") or {}).get("study_id"),
         "promotable": existing.get("promotable", meta.get("promotable", False)),
         "gates": existing.get("gates")
         or {"passed": False, "reasons": [], "promotable": False},
@@ -513,6 +683,8 @@ def build_conclusion_from_run(run_dir: Path, base: dict[str, Any] | None = None)
         "pit_audit": loaded.get("pit_audit") or existing.get("pit_audit"),
         "overfit": metrics.get("overfit") or existing.get("overfit"),
         "behavior_subset": existing.get("behavior_subset") or [],
+        "decisions": loaded.get("decisions") or existing.get("decisions") or [],
+        "hypothesis": existing.get("hypothesis") or cfg.get("hypothesis") or {},
     }
     links = {k: v for k, v in loaded["paths"].items() if v}
     return enrich_conclusion(
@@ -529,6 +701,7 @@ def render_html(conclusion: dict[str, Any]) -> str:
     tmpl = env.get_template("report_zh.html")
     return tmpl.render(
         run_id=conclusion.get("run_id"),
+        study_id=conclusion.get("study_id"),
         locale=conclusion.get("locale"),
         generated_at=conclusion.get("generated_at"),
         promotable=conclusion.get("promotable"),
@@ -553,10 +726,14 @@ def render_html(conclusion: dict[str, Any]) -> str:
         reject_stats=conclusion.get("reject_stats"),
         equity_svg=conclusion.get("equity_svg") or "",
         equity_summary=conclusion.get("equity_summary"),
+        drawdown_svg=conclusion.get("drawdown_svg") or "",
+        yearly=conclusion.get("yearly") or (conclusion.get("metrics") or {}).get("yearly") or [],
+        yearly_svg=conclusion.get("yearly_svg") or "",
         walk_forward=conclusion.get("walk_forward"),
         wf_json=json.dumps(conclusion.get("walk_forward"), ensure_ascii=False, indent=2, default=str),
         pit_audit=conclusion.get("pit_audit"),
         overfit=conclusion.get("overfit") or (conclusion.get("metrics") or {}).get("overfit"),
+        decisions=conclusion.get("decisions") or [],
         artifact_links=conclusion.get("artifact_links") or {},
     )
 
@@ -575,8 +752,9 @@ def write_report(
     else:
         enriched = enrich_conclusion(conclusion)
 
-    # Keep machine JSON leaner: drop large svg from json? Keep svg in HTML only.
-    json_payload = {k: v for k, v in enriched.items() if k != "equity_svg"}
+    # Keep machine JSON leaner: SVGs stay in HTML only.
+    skip_svg = {"equity_svg", "drawdown_svg", "yearly_svg"}
+    json_payload = {k: v for k, v in enriched.items() if k not in skip_svg}
     json_path = report_dir / "conclusion.json"
     html_path = report_dir / "conclusion.html"
     json_path.write_text(

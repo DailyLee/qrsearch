@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from datetime import date, datetime
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 import polars as pl
 
@@ -199,9 +199,21 @@ def _normalize_frame(raw: pl.DataFrame, ingest: IngestConfig, source: str) -> pl
             if src_actual is None:
                 continue
             src_name = src_actual
-        vals = []
+        vals: list[Any] = []
+        keep_as_str = False
         for v in raw.get_column(src_name).to_list():
-            vals.append(_coalesce_numeric(v, ingest.coalesce))
+            num = _coalesce_numeric(v, ingest.coalesce)
+            if num is not None:
+                vals.append(num)
+                continue
+            if v is None or str(v).strip() == "":
+                vals.append(None)
+                continue
+            # Preserve categoricals (e.g. industry names) that are not numeric
+            keep_as_str = True
+            vals.append(str(v).strip())
+        if keep_as_str:
+            vals = [None if x is None else str(x) for x in vals]
         feat_data[f"features__{feat_name if feat_name != '%B' else 'pct_b'}"] = vals
 
     if feat_data:

@@ -1,0 +1,6 @@
+﻿# Local experiment YAMLs (also gitignored). Keep out of agent index/search
+# so historical hypotheses are not auto-loaded. Agents may still Read/Write
+# a path when the user @-mentions it, a study decision points to it, or
+# they just created it in this session.
+configs/experiments/**
+!configs/experiments/.gitkeep

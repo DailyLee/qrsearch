@@ -26,9 +26,12 @@ def test_gates_deflated_sharpe():
     )
     gates = GatesConfig(min_oos_folds=0, min_trades=10, min_deflated_sharpe=0.5)
     res = evaluate_gates(metrics, gates, n_oos_folds=2)
-    assert res["passed"] is False
-    assert "deflated_sharpe_below_min" in res["reasons"]
+    assert res["structural_passed"] is True
+    assert res["passed"] is True  # structural ok
+    assert res["promotable"] is False
+    assert "deflated_sharpe_below_min" in res["economic_reasons"]
 
     gates2 = GatesConfig(min_oos_folds=0, min_trades=10, min_deflated_sharpe=None)
     res2 = evaluate_gates(metrics, gates2, n_oos_folds=2)
     assert res2["passed"] is True
+    assert res2["promotable"] is True

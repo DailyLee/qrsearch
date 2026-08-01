@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "hooks": {
+    "preToolUse": [
+      {
+        "command": "python .cursor/hooks/protect_events.py",
+        "matcher": "Write|StrReplace|Delete|EditNotebook",
+        "failClosed": true
+      }
+    ],
+    "beforeShellExecution": [
+      {
+        "command": "python .cursor/hooks/protect_events.py",
+        "failClosed": true
+      }
+    ]
+  }
+}

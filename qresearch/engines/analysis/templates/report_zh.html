@@ -127,6 +127,7 @@ footer {
     </h1>
     <p class="sub">
       运行 ID：<code>{{ run_id }}</code>
+      {% if study_id %} · Study：<code>{{ study_id }}</code>{% endif %}
       {% if generated_at %} · 生成时间：{{ generated_at }}{% endif %}
       {% if locale %} · {{ locale }}{% endif %}
     </p>
@@ -145,6 +146,11 @@ footer {
       </div>
       <div class="card"><div class="label">夏普比率</div><div class="value">{{ fmt(metrics.sharpe, 3) }}</div></div>
       <div class="card"><div class="label">信息比率 IR</div><div class="value">{{ fmt(metrics.information_ratio, 3) if metrics.information_ratio is not none else '-' }}</div></div>
+      <div class="card"><div class="label">超额收益</div>
+        <div class="value {{ 'pos' if (metrics.excess_return|default(0)) >= 0 else 'neg' }}">
+          {{ pct(metrics.excess_return) if metrics.excess_return is not none else '-' }}
+        </div>
+      </div>
       <div class="card"><div class="label">试次调整夏普</div><div class="value">{{ fmt(metrics.deflated_sharpe, 3) if metrics.deflated_sharpe is not none else '-' }}</div></div>
       <div class="card"><div class="label">最大回撤</div>
         <div class="value neg">{{ pct(metrics.max_dd) }}</div>
@@ -153,6 +159,33 @@ footer {
       <div class="card"><div class="label">年化换手</div><div class="value">{{ fmt(metrics.ann_turnover, 2) if metrics.ann_turnover is not none else '-' }}</div></div>
     </div>
   </header>
+
+  <section>
+    <h2>0. 决策存档</h2>
+    {% if decisions %}
+    <p class="muted">与 Study <code>{{ study_id or '-' }}</code> 关联的阶段决策（canonical：<code>workspace/studies/</code>；本 run 亦有镜像时见 <code>decisions/</code>）。</p>
+    <table>
+      <thead>
+        <tr><th>阶段</th><th>时间</th><th>关联 run</th><th>摘要</th><th>逻辑</th></tr>
+      </thead>
+      <tbody>
+      {% for d in decisions %}
+        <tr>
+          <td class="mono">{{ d.stage }}</td>
+          <td class="muted">{{ (d.created_at or '')[:19] }}</td>
+          <td class="mono">{{ d.run_id or '-' }}</td>
+          <td>{{ d.summary }}</td>
+          <td class="muted">{{ d.rationale }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted">本报告尚未关联决策链。请在 YAML 写 <code>hypothesis.study_id</code>，并用
+      <code>qr study decision --study ... --run {{ run_id }}</code> 落盘后再
+      <code>qr analyze report --run {{ run_id }}</code>。</p>
+    {% endif %}
+  </section>
 
   <section>
     <h2>1. 门禁与结论</h2>
@@ -314,12 +347,55 @@ footer {
       </tbody>
     </table>
     {% if equity_svg %}
-    <h3>净值曲线</h3>
+    <h3>净值曲线{% if metrics.benchmark_available %}（蓝=策略，棕虚线=基准，归一化）{% endif %}</h3>
     <div class="chart-wrap">{{ equity_svg | safe }}</div>
     {% if equity_summary %}
     <p class="muted">区间：{{ equity_summary.start_session }} → {{ equity_summary.end_session }}；
       峰值净值 {{ money(equity_summary.peak_nav) }}；最大持仓数 {{ equity_summary.max_positions }}</p>
     {% endif %}
+    {% endif %}
+    {% if drawdown_svg %}
+    <h3>回撤曲线</h3>
+    <div class="chart-wrap">{{ drawdown_svg | safe }}</div>
+    {% endif %}
+    {% if yearly %}
+    <h3>分年绩效（年化 / 超额）</h3>
+    {% if yearly_svg %}
+    <div class="chart-wrap">{{ yearly_svg | safe }}</div>
+    <p class="muted">柱：蓝色=策略年化收益；绿/红=年化超额（相对基准）。</p>
+    {% endif %}
+    <table>
+      <thead>
+        <tr>
+          <th>年份</th>
+          <th class="num">交易日</th>
+          <th class="num">开仓笔数</th>
+          <th class="num">区间收益</th>
+          <th class="num">年化</th>
+          <th class="num">夏普</th>
+          <th class="num">最大回撤</th>
+          <th class="num">基准收益</th>
+          <th class="num">超额</th>
+          <th class="num">年化超额</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in yearly %}
+        <tr>
+          <td>{{ r.year }}</td>
+          <td class="num">{{ r.n_sessions }}</td>
+          <td class="num">{{ r.n_trades }}</td>
+          <td class="num">{{ pct(r.total_return) }}</td>
+          <td class="num">{{ pct(r.ann_return) }}</td>
+          <td class="num">{{ fmt(r.sharpe, 2) }}</td>
+          <td class="num">{{ pct(r.max_dd) }}</td>
+          <td class="num">{{ pct(r.benchmark_total_return) }}</td>
+          <td class="num">{{ pct(r.excess_return) }}</td>
+          <td class="num">{{ pct(r.ann_excess) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
     {% endif %}
   </section>
 
@@ -410,7 +486,7 @@ footer {
       <div>{{ pit_audit.adjustment.methodology if pit_audit.adjustment else '-' }}
         （as_of=<code>{{ pit_audit.adjustment.as_of if pit_audit.adjustment else adjustment_as_of }}</code>）</div>
       <div class="k">完整会话级 PIT 复权</div>
-      <div>{{ '已实现' if pit_audit.adjustment and pit_audit.adjustment.full_pit_adj_factor_asof_session else '未实现（V1 为窗口终点前复权）' }}</div>
+      <div>{{ '已实现（会话 asof PIT）' if pit_audit.adjustment and pit_audit.adjustment.full_pit_adj_factor_asof_session else '未实现' }}</div>
       <div class="k">数据指纹</div><div class="mono">{{ pit_audit.data_fingerprint }}</div>
       <div class="k">警告</div><div>{{ pit_audit.warnings | join('；') if pit_audit.warnings else '无' }}</div>
       <div class="k">失败项</div><div>{{ pit_audit.failures | join('；') if pit_audit.failures else '无' }}</div>

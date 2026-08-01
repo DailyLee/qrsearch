@@ -311,15 +311,25 @@ def _process_exits(
         px_high = float(bar["high"]) if bar else None
         px_low = float(bar["low"]) if bar else None
 
+        # Revalue entry as-of today (PIT qfq) so stop/TP % survive splits/dividends.
+        entry_bar = panel.get(inst, pos.entry_session, asof=session)
+        entry_px = float(entry_bar["close"]) if entry_bar else pos.entry_price
+        # Prefer same field as fill when available
+        if entry_bar is not None and config.execution.price in entry_bar:
+            try:
+                entry_px = float(entry_bar[config.execution.price])
+            except (TypeError, ValueError):
+                pass
+
         triggered = None
         for key in config.risk.exit_priority:
             if key == "stop" and config.risk.stop_loss is not None and px_low is not None:
-                stop_px = pos.entry_price * (1.0 + config.risk.stop_loss)
+                stop_px = entry_px * (1.0 + config.risk.stop_loss)
                 if px_low <= stop_px:
                     triggered = ("stop", stop_px)
                     break
             if key == "take_profit" and config.risk.take_profit is not None and px_high is not None:
-                tp_px = pos.entry_price * (1.0 + config.risk.take_profit)
+                tp_px = entry_px * (1.0 + config.risk.take_profit)
                 if px_high >= tp_px:
                     triggered = ("take_profit", tp_px)
                     break

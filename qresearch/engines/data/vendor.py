@@ -58,7 +58,6 @@ def ping_vendor() -> dict:
         pro = get_local_pro()
         info["import_ok"] = True
         info["pro_type"] = type(pro).__name__
-        # light fingerprint on data dir listing
         sample = list(data.glob("**/data.parquet"))[:200]
         info["fingerprint"] = fingerprint_paths(sample) if sample else "unavailable"
     except Exception as e:
@@ -87,12 +86,34 @@ def load_trade_calendar(start: date, end: date, exchange: str = "SSE") -> list[d
     )
     if df is None or getattr(df, "empty", True):
         return []
-    # pandas DF from zer0share
     cal = []
     for x in df["cal_date"].tolist():
         s = str(x)
         cal.append(datetime.strptime(s, "%Y%m%d").date())
     return sorted(cal)
+
+
+def is_index_ts_code(ts_code: str) -> bool:
+    """Heuristic: SH indices are 000xxx.SH; SZ indices are 399xxx.SZ."""
+    c = str(ts_code).strip().upper()
+    if c.endswith(".SH") and c.startswith("000"):
+        return True
+    if c.endswith(".SZ") and c.startswith("399"):
+        return True
+    return False
+
+
+_EMPTY_BARS = {
+    "instrument": pl.Utf8,
+    "trade_date": pl.Date,
+    "open": pl.Float64,
+    "high": pl.Float64,
+    "low": pl.Float64,
+    "close": pl.Float64,
+    "vol": pl.Float64,
+    "amount": pl.Float64,
+    "adj_factor": pl.Float64,
+}
 
 
 def load_daily_long(
@@ -102,31 +123,20 @@ def load_daily_long(
     *,
     adj: str = "qfq",
 ) -> tuple[pl.DataFrame, str]:
+    """Load unadjusted OHLCV + adj_factor for stocks.
+
+    Prices are NOT window-end qfq'd here. PIT qfq/hfq is applied in PricePanel.get.
+    `adj` is kept for API compatibility / cache labeling only.
     """
-    Load OHLCV long panel for instruments.
-    Returns (frame, data_fingerprint).
-    Fingerprint may be unavailable.
-    """
-    codes = sorted(set(instruments))
+    _ = adj  # adjustment applied at read time in PricePanel
+    codes = sorted({c for c in instruments if not is_index_ts_code(c)})
     if not codes:
-        return pl.DataFrame(
-            schema={
-                "instrument": pl.Utf8,
-                "trade_date": pl.Date,
-                "open": pl.Float64,
-                "high": pl.Float64,
-                "low": pl.Float64,
-                "close": pl.Float64,
-                "vol": pl.Float64,
-                "amount": pl.Float64,
-            }
-        ), "unavailable"
+        return pl.DataFrame(schema=_EMPTY_BARS), "unavailable"
 
     pro = get_local_pro()
     start_s, end_s = _yyyymmdd(start), _yyyymmdd(end)
     import pandas as pd
 
-    # Prefer per-code / joined pulls when universe is small; else date-range market pull.
     daily_parts = []
     if len(codes) <= 80:
         for code in codes:
@@ -141,42 +151,38 @@ def load_daily_long(
     if daily is None or getattr(daily, "empty", True):
         raise VendorError(f"no daily bars in [{start_s},{end_s}] for universe")
 
-    if adj in ("qfq", "hfq"):
-        if len(codes) <= 80:
-            adj_parts = []
-            for code in codes:
-                part = pro.adj_factor(ts_code=code, start_date=start_s, end_date=end_s)
-                if part is not None and not getattr(part, "empty", True):
-                    adj_parts.append(part)
-            adj_df = pd.concat(adj_parts, ignore_index=True) if adj_parts else pd.DataFrame()
-        else:
-            adj_df = pro.adj_factor(start_date=start_s, end_date=end_s)
-            if adj_df is not None and not getattr(adj_df, "empty", True):
-                adj_df = adj_df[adj_df["ts_code"].isin(codes)]
-        if adj_df is None or adj_df.empty:
-            raise VendorError("adj_factor empty")
-        merged = daily.merge(
-            adj_df[["ts_code", "trade_date", "adj_factor"]],
-            on=["ts_code", "trade_date"],
-            how="left",
-        ).sort_values(["ts_code", "trade_date"])
-        merged["adj_factor"] = merged.groupby("ts_code")["adj_factor"].bfill()
-        merged = merged.dropna(subset=["adj_factor"])
-        if adj == "qfq":
-            base = merged.groupby("ts_code")["adj_factor"].transform("last")
-            mult = merged["adj_factor"] / base
-        else:
-            mult = merged["adj_factor"]
-        for c in ("open", "high", "low", "close"):
-            merged[c] = (merged[c] * mult).round(2)
-        daily = merged
+    if len(codes) <= 80:
+        adj_parts = []
+        for code in codes:
+            part = pro.adj_factor(ts_code=code, start_date=start_s, end_date=end_s)
+            if part is not None and not getattr(part, "empty", True):
+                adj_parts.append(part)
+        adj_df = pd.concat(adj_parts, ignore_index=True) if adj_parts else pd.DataFrame()
+    else:
+        adj_df = pro.adj_factor(start_date=start_s, end_date=end_s)
+        if adj_df is not None and not getattr(adj_df, "empty", True):
+            adj_df = adj_df[adj_df["ts_code"].isin(codes)]
+    if adj_df is None or adj_df.empty:
+        raise VendorError("adj_factor empty")
 
-    daily["trade_date"] = pd.to_datetime(daily["trade_date"].astype(str), format="%Y%m%d")
+    merged = daily.merge(
+        adj_df[["ts_code", "trade_date", "adj_factor"]],
+        on=["ts_code", "trade_date"],
+        how="left",
+    ).sort_values(["ts_code", "trade_date"])
+    # PIT-safe: only fill from the past (never bfill from future factors)
+    merged["adj_factor"] = merged.groupby("ts_code")["adj_factor"].ffill()
+    merged = merged.dropna(subset=["adj_factor"])
+
+    merged["trade_date"] = pd.to_datetime(merged["trade_date"].astype(str), format="%Y%m%d")
     pl_df = pl.from_pandas(
-        daily[["ts_code", "trade_date", "open", "high", "low", "close", "vol", "amount"]].rename(
-            columns={"ts_code": "instrument"}
-        )
-    ).with_columns(pl.col("trade_date").cast(pl.Date))
+        merged[
+            ["ts_code", "trade_date", "open", "high", "low", "close", "vol", "amount", "adj_factor"]
+        ].rename(columns={"ts_code": "instrument"})
+    ).with_columns(
+        pl.col("trade_date").cast(pl.Date),
+        pl.col("adj_factor").cast(pl.Float64),
+    )
 
     settings = get_settings()
     data_root = Path(os.environ.get("ZER0SHARE_DATA", settings.data_dir()))
@@ -185,16 +191,35 @@ def load_daily_long(
 
 
 def load_index_daily(ts_code: str, start: date, end: date) -> pl.DataFrame:
+    """Load index OHLCV; adj_factor fixed at 1.0 (no stock-style adjustment)."""
     pro = get_local_pro()
     df = pro.index_daily(ts_code=ts_code, start_date=_yyyymmdd(start), end_date=_yyyymmdd(end))
     if df is None or getattr(df, "empty", True):
-        return pl.DataFrame()
+        return pl.DataFrame(schema=_EMPTY_BARS)
     import pandas as pd
 
     df = df.copy()
     df["trade_date"] = pd.to_datetime(df["trade_date"].astype(str), format="%Y%m%d")
+    if "vol" not in df.columns:
+        df["vol"] = 0.0
+    if "amount" not in df.columns:
+        df["amount"] = 0.0
+    df["adj_factor"] = 1.0
     return pl.from_pandas(
-        df[["ts_code", "trade_date", "open", "high", "low", "close"]].rename(
+        df[["ts_code", "trade_date", "open", "high", "low", "close", "vol", "amount", "adj_factor"]].rename(
             columns={"ts_code": "instrument"}
         )
-    ).with_columns(pl.col("trade_date").cast(pl.Date))
+    ).with_columns(
+        pl.col("trade_date").cast(pl.Date),
+        pl.col("vol").cast(pl.Float64),
+        pl.col("amount").cast(pl.Float64),
+        pl.col("adj_factor").cast(pl.Float64),
+    )
+
+
+def load_indices_long(instruments: Iterable[str], start: date, end: date) -> pl.DataFrame:
+    frames = [load_index_daily(code, start, end) for code in sorted(set(instruments))]
+    frames = [f for f in frames if f.height]
+    if not frames:
+        return pl.DataFrame(schema=_EMPTY_BARS)
+    return pl.concat(frames, how="diagonal_relaxed")

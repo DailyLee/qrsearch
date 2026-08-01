@@ -30,38 +30,44 @@ def run_pit_audit(
     """
     Build pit_audit payload.
 
-    Current adjustment implementation is `qfq_window_end` (vendor uses last
-    adj_factor in the loaded window). Full per-session adj_factor PIT is not implemented.
+    qfq mode uses per-session PIT: price[t|T] = raw[t] * adj[t] / adj[T]
+    (base = adj_factor on asof session T; no study-window-end peek).
     """
     checks: list[dict[str, Any]] = []
     warnings: list[str] = []
     failures: list[str] = []
 
     start, end = derive_panel_range(events, config)
-    adj_as_of = panel.adjustment_as_of or config.adjustment.as_of or end.strftime("%Y%m%d")
+    adj_as_of = panel.adjustment_as_of or config.adjustment.as_of or "session_pit"
     cache_key = _cache_key(
         sorted(panel.instruments),
         panel.start,
         panel.end,
         config.adjustment.mode,
-        adj_as_of,
     )
-
+    methodology = {
+        "qfq": "qfq_session_pit",
+        "hfq": "hfq_cumulative",
+        "none": "raw_unadjusted",
+    }.get(config.adjustment.mode, config.adjustment.mode)
     checks.append(
         {
             "id": "adjustment_methodology",
-            "status": "warn",
+            "status": "pass",
             "detail": {
-                "implemented": "qfq_window_end",
-                "not_implemented": "adj_factor_asof_session",
+                "implemented": methodology,
                 "mode": config.adjustment.mode,
                 "as_of": adj_as_of,
                 "cache_key": cache_key,
-                "message": "前复权以研究窗口终点 adj_factor 为基准，不是逐日历史可得因子的完整 PIT。",
+                "panel_range": [str(start), str(end)],
+                "message": (
+                    "前复权按会话 asof：base=当日可得 adj_factor；研究前预加载未复权+因子，get(asof=) 时缩放。"
+                    if config.adjustment.mode == "qfq"
+                    else f"adjustment.mode={config.adjustment.mode}"
+                ),
             },
         }
     )
-    warnings.append("adjustment_is_qfq_window_end_not_full_pit")
 
     checks.append(
         {
@@ -175,8 +181,8 @@ def run_pit_audit(
         "adjustment": {
             "mode": config.adjustment.mode,
             "as_of": adj_as_of,
-            "methodology": "qfq_window_end",
-            "full_pit_adj_factor_asof_session": False,
+            "methodology": methodology,
+            "full_pit_adj_factor_asof_session": config.adjustment.mode == "qfq",
             "cache_key": cache_key,
         },
         "data_fingerprint": panel.data_fingerprint,

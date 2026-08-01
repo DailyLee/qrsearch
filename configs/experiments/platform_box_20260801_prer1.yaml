@@ -1,64 +1,154 @@
-# hypothesis: short-horizon Rank IC for pre_r1 and has_breakthrough is stably negative
-# (2019-2025 events) → prefer low pre_r1; exclude breakthrough flags; keep box_quality>=0.94.
+hypothesis:
+
+  id: platform_box_20260801_prer1
+
+  statement: "Short-horizon Rank IC for pre_r1 and has_breakthrough is negative; prefer low pre_r1; exclude breakthrough."
+
+  expected_sign:
+
+    features.pre_r1: negative
+
+    features.has_breakthrough: negative
+
+
+
 ingest:
+
   aliases:
+
     instrument: code
+
     entry_intent_date: buy_date
+
     exit_intent_date: sell_date
+
     features:
+
       box_quality: box_quality
+
       pct_b: "%B"
+
       bandwidth_percent: bandwidth_percent
+
       pre_cum2: pre_cum2
+
       pre_r1: pre_r1
+
       rsi_value: rsi_value
+
       has_breakthrough: has_breakthrough
+
   coalesce: last
 
+
+
 signals:
+
   filters:
+
     - { field: features.box_quality, op: ge, value: 0.94 }
+
     - { field: features.has_breakthrough, op: eq, value: 0 }
+
   rank_by:
+
     - { field: features.pre_r1, ascending: true }
+
     - { field: features.bandwidth_percent, ascending: true }
 
+
+
 portfolio:
+
   starting_cash: 1000000
+
   sizing: equal_weight
+
   sizing_base: cash
+
   max_weight: 0.35
+
   max_new_entries_per_day: 10
+
   lot_size: 100
 
+
+
 execution:
+
   price: open
+
   lag_sessions: 0
+
   order_validity_sessions: 5
+
   entry_filter:
+
     enabled: false
+
     ref: decision_prior_close
 
+
+
 costs:
-  commission_rate: 0.00034
-  commission_min: 5.0
+
+  commission_rate: 0.00008
+
+  commission_min: 0.0
+
   stamp_duty_rate: 0.0005
-  slippage_bps: 20.0
+
+  transfer_fee_rate: 0.00001
+
+  slippage_bps: 10.0
+
+
 
 risk:
+
   stop_loss: -0.086
+
   take_profit: 0.158
+
   max_hold_sessions: null
 
+
+
 adjustment:
+
   mode: qfq
 
+
+
 benchmark:
+
   instrument: "000852.SH"
 
+
+
 gates:
+
   min_oos_folds: 2
+
   min_trades: 10
+
   n_trials_assumed: 2
 
+  min_oos_sharpe: 0.0
+
+  max_oos_drawdown: 0.35
+
+  require_economic_for_promote: true
+
+
+
+factors:
+
+  min_non_null: 50
+
+  max_features: 32
+
+
+
 ic_horizons: [1, 5, 10, 20]
+
