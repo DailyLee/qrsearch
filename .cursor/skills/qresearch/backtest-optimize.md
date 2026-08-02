@@ -83,7 +83,7 @@ evaluation:
 | stop / take / hold / 仓位配额等 | `qr pipeline sensitivity` |
 | 写回 | `apply-best` → research → 闸门验收 |
 
-不要求、也不假装：CPCV 等引擎未提供的方法。反模式见 [research-loop.md](research-loop.md)。
+只用上表已有命令；勿声称做了引擎未提供的检验。反模式见 [research-loop.md](research-loop.md)。
 
 ---
 
@@ -203,11 +203,12 @@ qr config apply-best --from-run <opt_or_sweep_id> \
 ```bash
 qr pipeline research --csv <validate_or_oos_csvs...> --config <frozen.yaml> \
   --n-trials-assumed <N> --format json --quiet
-qr study decision --study <id> --stage <backtest_validate|holdout|holdout_stress> \
-  --summary "..." --rationale "..." --run <run_id> --config <frozen.yaml> \
-  --format json --quiet
+qr study decision --study <id> --stage holdout \
+  --summary "<validate|holdout|holdout_stress>: ..." --rationale "..." \
+  --run <run_id> --config <frozen.yaml> --format json --quiet
 ```
 
+CLI stage 仅有 `holdout`（无 `backtest_validate` / `holdout_stress` 枚举）；**角色写进 summary**。  
 Holdout decision：绝对/相对是否达标、`mean_invested`、角色 final vs stress。  
 stress 差 → 归因，不改参；新假设开新 study。
 

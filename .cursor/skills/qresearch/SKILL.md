@@ -28,14 +28,16 @@ description: >-
 | 3. 回测与优化 | [backtest-optimize.md](backtest-optimize.md) | 协议；**优化纪律**；research；搜参；sensitivity；OOS |
 | 4. 质量闸门 | [quality-gates.md](quality-gates.md) | 硬否决：密度 / 退出结构 / 仓位 / 多目标；候选验收后才冻结 |
 | 编排索引 | [research-loop.md](research-loop.md) | 分支、停手、反模式 |
+| 多策略组合 | [multi-strategy-portfolio.md](multi-strategy-portfolio.md) | 触发：组合/分仓/sleeve/book；§0.4 何时开腿/定稿；账户外合成 |
 | CLI 全表 | [reference.md](reference.md) | 命令与路径 |
-| 工程改动 | [../../../agent.md](../../../agent.md) | 四位一体：配置·用例·skill·md |
 
-用户只点某一阶段时，**只读对应文档**；涉及定稿/选格时**必读 quality-gates**。
+用户只点某一阶段时，**只读对应文档**；涉及定稿/选格时**必读 quality-gates**。  
+提到组合/分仓/sleeve/book 时读多策略专章；**口头要组合 ≠ 必须开 book**（先过 §0.4）。  
+本 skill **只做研投编排**（读证据、写实验 YAML、回测/闸门、结论）；勿把会话目标改成改引擎/补 CLI/写实现清单。
 
 ## 硬性规则
 
-工程与契约（仓库侧）：
+研投契约（必须遵守）：
 
 1. Agent I/O：`--format json --quiet`；只解析 stdout JSON；日志在 stderr。  
 2. 勿编造行情；缺数据停并提示同步 zer0share。勿引入 vnpy。  
@@ -69,13 +71,16 @@ qr study decision --study <study_id> --stage <stage> \
 qr analyze report --run <run_id> --format json --quiet
 ```
 
-| stage | 何时写 |
+| stage（须 ∈ CLI `_STAGES`） | 何时写 |
 |-------|--------|
 | `factor_analysis` | 因子结论后 |
 | `strategy_design` | 实验 YAML 落盘后（含 exit 语义） |
 | `backtest_train` | 训练年 research + 闸门结果后 |
-| `optimize` / `sweep` / `sensitivity` | 搜参后（含否决格） |
-| `backtest_validate` / `holdout` / `holdout_stress` / `full_sample` | 各窗评估后 |
+| `optimize` / `sensitivity` | 搜参后（含否决格）；**sweep 亦用 `optimize`**，summary 写明 sweep |
+| `holdout` | holdout / validate / stress 窗评估后（summary 写明角色） |
+| `full_sample` | 全样本仅披露后 |
+| `promote` | 晋升包后 |
+| `other` | 其余（含 portfolio book freeze；summary 写明 book） |
 
 ## 默认研究闭环
 
@@ -108,6 +113,7 @@ qr data validate-events --csv <all_event_csvs...> --config <base_or_exp.yaml> --
 | 只要回测/优化 | 已有 YAML → backtest-optimize.md + **quality-gates.md** |
 | 只要示例跑通 | examples research，并声明「未做因子定策略 / 未过闸门」 |
 | 只要报告 | `qr analyze report --run ...` |
+| 组合 / 分仓 / sleeve / book | [multi-strategy-portfolio.md](multi-strategy-portfolio.md) §0.4 → 再决定是否多腿 |
 | 实盘导出 | promote / ops（须闸门 + 用户要求） |
 
 ## 配置与产物（速查）

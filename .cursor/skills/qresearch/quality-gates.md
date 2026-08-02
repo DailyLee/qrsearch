@@ -52,6 +52,20 @@
 
 失败时：一次只回退**一类**旋钮（信号 **或** 执行/组合），写 decision，禁止联乘重扫。
 
+## 多策略 book 闸门（P*）
+
+何时开腿 / 何时定稿动机见 [multi-strategy-portfolio.md](multi-strategy-portfolio.md) §0.4。  
+下列闸门在 **组合层** 检查；**不替代**各袖子的 G0–G8。
+
+| ID | 何时检查 | 触发条件 | 动作 |
+|----|----------|----------|------|
+| P0 | 拟写 book / 纸面合成前 | 任一拟入书袖子未过适用单策略闸门，或未钉死配置/包 | **禁止**定稿 book；回单腿闭环 |
+| P1 | 同上 | 跨袖子 `ingest.board` 不一致 | 否决（对齐 G8）；不得混板 book |
+| P2 | 权重 / book 清单 | 权重和非法；来自 book 层网格或组合净值拧参；再平衡规则或共享约束未声明（约束可为 null，但须明示） | 否决；权重仅用户给定或单一简单规则且落 decision |
+| P3 | 合成评估 | 未并列分腿 Sharpe/ann/`mean_invested`/退出结构；或未披露相关/同跌且未标 `correlation_unknown` | 不得称 book 已评估完备；不得称「分散组合」 |
+| P4 | 向用户报「组合策略」 | 缺旁路标签 `book_paper_only` | 必须补标签；禁止冒充实盘完备 |
+| P5 | 动机 / 交叉污染 | 澄清为 `stay_single`，或仅阈值/执行旋钮分歧却开多腿；或用组合期表现回头改任一袖子 YAML/网格 | 退出组合层 / 新假设新 study |
+
 ## 旁路标签（允许披露，不可冒充完整策略）
 
 | 标签 | 含义 | 对用户必须说明 |
@@ -59,6 +73,9 @@
 | `signal_sparse` | **触发 G1**（未达密度下限），边沿或可但不可支撑年化目标 | keep 比例、为何不扩池 |
 | `execution_template` | 未跑 sensitivity 或未过 G2–G4/G7 | 「执行层仍为模板」 |
 | `metric_sidecar` | 单指标好看但未过 G5/G6 | 并列未达标目标 |
+| `book_paper_only` | 账户外纸面合成（无共享现金/统一 pretrade） | 分腿指标并列；非实盘完备 |
+| `correlation_unknown` | 未做相关/同跌分析 | 组合分散结论不可靠 |
+| `sleeve_incomplete` | 拟披露的分腿对比中含 `execution_template` / `signal_sparse` 袖子 | 不得把该书标为可实盘 book |
 
 ## `apply-best` 强制流程
 

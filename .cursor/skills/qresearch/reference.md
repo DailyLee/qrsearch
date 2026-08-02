@@ -9,16 +9,14 @@ zer0share has **no** as-of qfq API (`pro_bar(adj=qfq)` is window-end). qresearch
 ## Layout
 
 ```
-qresearch/              # package + CLI
-configs/examples/       # templates (copy before editing)
-  configs/experiments/    # local hypothesis drop zone (not a knowledge base)
-tests/fixtures/         # synthetic panels for unit tests
-workspace/              # local inputs + artifacts (gitignored)
-  events/               # event CSVs (READ-ONLY for agents; also events_ascii/)
-  runs/                 # immutable experiment runs (id = local YYYYMMDD_HHMMSS_mmm)
-  studies/              # decision logs per study
-  models/               # promoted model packages
-  cache/                # price panel cache
+configs/examples/       # 只读模板
+configs/experiments/    # 实验 YAML 落盘（非知识库；勿通读当起点）
+workspace/
+  events/ | events_ascii/   # 事件 CSV（只读）
+  runs/                     # 实验产物
+  studies/                  # decision 日志
+  models/                   # promote 包
+  cache/                    # 行情缓存
 ```
 
 Run layout:
@@ -54,17 +52,17 @@ Research artifacts (typical): `sample_profile.json`（含 `years` / `years_span`
 | `qr config new --out configs/experiments/<name>.yaml --study-id ... [--from examples/...] [--set k=v]` | 开局脚手架：examples→experiments；强制空 signals；拒写 examples/ |
 | `qr config apply-best --from-run ... --out configs/experiments/<name>_vN.yaml` | 迭代写回候选 YAML（拒 examples/）；**须再 research + quality-gates 验收** 才定稿 |
 | `qr promote --run ... --model-id ... --version ... [--force]` | Create Model Package；门禁失败 exit 4 |
-| `qr ops run --asof YYYYMMDD --csv ... [--package id==ver] [--mode paper\|signal] [--state ...] [--config ...]` | Order intents |
+| `qr ops run --asof YYYYMMDD --csv ... [--package id==ver] [--mode paper\|signal] [--state ...] [--config ...]` | Order intents（单 package） |
 | `qr runs list\|show\|compare\|archive` | Experiment registry |
-| `qr study decision --study ... --stage ... --summary ... --rationale ...` | Archive stage decision |
+| `qr study decision --study ... --stage ... --summary ... --rationale ...` | Archive stage decision（stage ∈ `_STAGES`；book freeze 用 `other`） |
 | `qr study list --study ...` | List decisions for a study |
+
+多策略组合：无专用 book 命令；分腿 `ops run` + 纸面合成见 [multi-strategy-portfolio.md](multi-strategy-portfolio.md)。
 
 `--csv` may be repeated for multi-file ingest where supported.
 
 Global flags (work after subcommands): `--format json|text`, `--quiet`, `--board limit10|limit20|all`。  
 `--board` 覆盖 YAML `ingest.board`（默认 `limit10`）。`--run-id` 仅部分命令支持，不是全局旗标。
-
-工程改动（新字段/CLI/语义）必须四位一体对齐：配置 · 用例 · skill · md，见仓库根目录 [agent.md](../../../agent.md) §1。
 
 ## Ingest aliases（列映射示意，非策略）
 
@@ -151,16 +149,8 @@ signals:
 定稿前用 `analyze trades` 检查退出份额是否经济可兑现（G2/G3）。  
 T+1: no same-session exit (`asof_session > entry_session`).
 
-引擎未提供的方法（如 CPCV）：勿在研究结论中假装已做。
-
-## Tests
-
-```bash
-pytest -q
-```
-
-Marker `e2e_local`: needs local zer0share + full event CSVs; do not require in CI-less agent loops unless user asks.
+引擎未提供的方法：勿在研究结论中假装已做。
 
 ## Sample data
 
-Under `workspace/events/` (if present): multi-year consolidation scan merges and small heads for smoke tests. Prefer small CSV for first agent iteration; scale up after ping + validate-events succeed.
+事件在 `workspace/events/` / `events_ascii/`（只读）。先 `ping` + `validate-events`，再按 `sample_profile` 扩年；勿为图省事丢可用年。

@@ -9,9 +9,10 @@ Agent 判断；CLI 只计算。主入口 [SKILL.md](SKILL.md)。
 | [strategy-design.md](strategy-design.md) | `qr config new`；信号 vs 执行/风控；exit 语义 |
 | [backtest-optimize.md](backtest-optimize.md) | 协议 / 优化纪律 / research / 搜参 / sensitivity / OOS |
 | [quality-gates.md](quality-gates.md) | **硬否决**：密度、退出结构、仓位、多目标；候选验收后才冻结 |
+| [multi-strategy-portfolio.md](multi-strategy-portfolio.md) | 多策略 book：何时开腿 / 何时定稿；账户外合成 |
 | [reference.md](reference.md) | CLI 与目录 |
 
-**反模式全文只在本文件维护**；专章不重复罗列，只链到此处或 quality-gates。
+反模式见本节；定稿否决见 [quality-gates.md](quality-gates.md)。
 
 ## Roles
 
@@ -45,9 +46,16 @@ Agent 判断；CLI 只计算。主入口 [SKILL.md](SKILL.md)。
                                                                   → validate? → holdout → stress?
                                                                   → full disclose → STOP
                                                                   （stress 差只归因；3 轮无改进 → STOP）
+
+用户要「组合 / 分仓 / sleeve / book」?
+  → 读 [multi-strategy-portfolio.md](multi-strategy-portfolio.md) §0.4
+     stay_single → 上图单策略闭环
+     explore_sleeves → 每腿各自走完上图；腿失败可 drop
+     book_freeze 条件齐 → 组合层 + quality-gates P*；纸面须 `book_paper_only`
 ```
 
-**铁律**：`best_value` 最高 ≠ 可冻结；流程为 `apply-best`（候选）→ research → [quality-gates.md](quality-gates.md)。
+**铁律**：`best_value` 最高 ≠ 可冻结；流程为 `apply-best`（候选）→ research → [quality-gates.md](quality-gates.md)。  
+口头「要组合」≠必须开 book；动机与定稿条件见多策略专章 §0.4。
 
 ## 停手条件
 
@@ -60,7 +68,7 @@ Agent 判断；CLI 只计算。主入口 [SKILL.md](SKILL.md)。
 
 停手时报告：champion 或旁路标签；`run_id` + 配置；因子理由；指标 + invested + 退出结构摘要；执行层是否定稿；为何不 promote；续跑命令。
 
-## Anti-patterns（全文唯一清单）
+## Anti-patterns
 
 ### 因子 / 信号证据
 
@@ -99,3 +107,13 @@ Agent 判断；CLI 只计算。主入口 [SKILL.md](SKILL.md)。
 - 只改 signals、执行层抄模板却称完整策略  
 - 达标不报 `mean_invested`；`--force` promote「收尾」  
 - 把因子行业中性当成组合分散，或无动机乱填行业 cap  
+
+### 多策略 / book（动机见 multi-strategy-portfolio §0.4；闸门 P* 见 quality-gates）
+
+- 未过研究动机判据就开双 study「凑组合」  
+- 单 YAML 硬塞两套 risk；用 `signals.composite` 冒充多策略  
+- 仅阈值/执行旋钮分歧却开第二腿或 book  
+- 组合净值最优去改单腿 stop/take/分流边界；两袖子共享 holdout  
+- 未单独过闸就定稿 book；一腿失败仍硬凑合成夏普  
+- 混 board 跨袖子合成；共享约束未声明；纸面合成冒充实盘完备（缺 `book_paper_only`）  
+- 虚构不存在的 book CLI；应用分腿 `ops run` + 专章 §3 合并  
