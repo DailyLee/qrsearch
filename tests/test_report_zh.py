@@ -96,7 +96,9 @@ def test_summarize_trades_and_chinese_html(tmp_path: Path):
         equity=equity,
         rejects=[{"session": "2025-01-02", "instrument": "000003.SZ", "reason": "limit_up"}],
         artifact_links={"trades": "artifacts/trades.csv"},
+        instrument_names={"000001.SZ": "平安银行", "000002.SZ": "万科A"},
     )
+    assert enriched["sample_trades"][-1].get("name") in ("平安银行", "万科A")
     assert enriched.get("equity_chart") and enriched["equity_chart"]["type"] == "line"
     assert enriched.get("drawdown_chart")
     assert enriched.get("yearly_chart") and enriched["yearly_chart"]["type"] == "bar"
@@ -107,6 +109,8 @@ def test_summarize_trades_and_chinese_html(tmp_path: Path):
     assert "回测绩效" in html
     assert "交易统计" in html
     assert "止盈" in html
+    assert "平安银行" in html or "万科A" in html
+    assert "<th>名称</th>" in html
     assert 'id="chart-data-equity"' in html
     assert "chart-host" in html
     assert "qr-charts" not in html  # inline IIFE, no external lib

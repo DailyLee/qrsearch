@@ -658,6 +658,61 @@ def _jinja_env() -> Environment:
     return env
 
 
+def load_instrument_name_map(
+    events: pl.DataFrame | Path | str | None,
+) -> dict[str, str]:
+    """Map instrument -> display name from events `features.name` (last non-null wins)."""
+    if events is None:
+        return {}
+    if isinstance(events, (str, Path)):
+        path = Path(events)
+        if not path.exists():
+            return {}
+        try:
+            events = pl.read_parquet(path)
+        except Exception:
+            return {}
+    if not isinstance(events, pl.DataFrame) or events.height == 0:
+        return {}
+    if "instrument" not in events.columns:
+        return {}
+    name_col = None
+    for c in ("features.name", "name", "features__name"):
+        if c in events.columns:
+            name_col = c
+            break
+    if name_col is None:
+        return {}
+    out: dict[str, str] = {}
+    for row in events.select(["instrument", name_col]).iter_rows(named=True):
+        inst = str(row.get("instrument") or "").strip()
+        raw = row.get(name_col)
+        if not inst or raw is None:
+            continue
+        name = str(raw).strip()
+        if name and name.lower() not in ("nan", "none", "null"):
+            out[inst] = name
+    return out
+
+
+def attach_instrument_names(
+    rows: list[dict[str, Any]],
+    name_map: dict[str, str] | None,
+) -> list[dict[str, Any]]:
+    """Copy rows and set `name` from map when missing."""
+    if not rows:
+        return []
+    mapping = name_map or {}
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        item = dict(r)
+        inst = str(item.get("instrument") or "").strip()
+        if not item.get("name") and inst in mapping:
+            item["name"] = mapping[inst]
+        out.append(item)
+    return out
+
+
 def enrich_conclusion(
     conclusion: dict[str, Any],
     *,
@@ -665,6 +720,8 @@ def enrich_conclusion(
     equity: list[dict[str, Any]] | pl.DataFrame | None = None,
     rejects: list[dict[str, Any]] | None = None,
     artifact_links: dict[str, str] | None = None,
+    instrument_names: dict[str, str] | None = None,
+    events: pl.DataFrame | Path | str | None = None,
 ) -> dict[str, Any]:
     out = dict(conclusion)
     out["locale"] = out.get("locale") or "zh-CN"
@@ -706,7 +763,16 @@ def enrich_conclusion(
         trade_rows = trades.to_dicts()
     else:
         trade_rows = list(trades or [])
-    out["sample_trades"] = trade_rows[-30:] if trade_rows else []
+    name_map = dict(instrument_names or {})
+    if not name_map:
+        name_map = load_instrument_name_map(events)
+    if not name_map and artifact_links:
+        ev_path = artifact_links.get("events") or artifact_links.get("ranked_events")
+        if ev_path:
+            name_map = load_instrument_name_map(ev_path)
+    sample = trade_rows[-30:] if trade_rows else []
+    out["sample_trades"] = attach_instrument_names(sample, name_map)
+    out["instrument_names"] = name_map
 
     reasons = list((out.get("gates") or {}).get("reasons") or [])
     out["gate_reasons"] = [_gate_reason_zh(r) for r in reasons]
@@ -895,6 +961,7 @@ def build_conclusion_from_run(
         equity=loaded["equity"],
         rejects=loaded["rejects"],
         artifact_links=links,
+        events=links.get("events") or links.get("ranked_events"),
     )
 
 
@@ -979,6 +1046,7 @@ def write_report(
         "equity_chart",
         "drawdown_chart",
         "yearly_chart",
+        "instrument_names",
     }
     json_payload = {k: v for k, v in enriched.items() if k not in skip_heavy}
     json_path = report_dir / "conclusion.json"
