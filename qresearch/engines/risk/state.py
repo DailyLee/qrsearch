@@ -15,6 +15,7 @@ class Position:
     exit_intent_date: date
     cost_basis: float
     pending_exit_reason: str | None = None
+    industry: str | None = None
 
 
 @dataclass

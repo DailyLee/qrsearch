@@ -102,7 +102,51 @@ code, .mono { font-family: Consolas, "SF Mono", monospace; font-size: 0.88em; }
   padding: 0.65rem 0.85rem;
   font-size: 0.9rem;
 }
-.chart-wrap { overflow-x: auto; }
+.chart-wrap { overflow-x: auto; position: relative; }
+.chart-host {
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  min-height: 220px;
+  background: #fbfdff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.chart-host svg { width: 100%; height: auto; display: block; cursor: crosshair; }
+.chart-tooltip {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  display: none;
+  min-width: 140px;
+  max-width: 280px;
+  padding: 0.45rem 0.65rem;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.92);
+  color: #f8fafc;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.18);
+  white-space: nowrap;
+}
+.chart-tooltip .tt-date { color: #cbd5e1; margin-bottom: 0.2rem; }
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 0.35rem 0 0.15rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.chart-legend i {
+  display: inline-block;
+  width: 12px;
+  height: 3px;
+  margin-right: 0.3rem;
+  vertical-align: middle;
+  border-radius: 1px;
+}
+.chart-hint { font-size: 0.78rem; color: var(--muted); margin: 0.25rem 0 0; }
 svg.equity { width: 100%; max-width: 100%; height: auto; display: block; }
 ul.compact { margin: 0.3rem 0; padding-left: 1.2rem; }
 footer {
@@ -147,7 +191,7 @@ footer {
       <div class="card"><div class="label">夏普比率</div><div class="value">{{ fmt(metrics.sharpe, 3) }}</div></div>
       <div class="card"><div class="label">信息比率 IR</div><div class="value">{{ fmt(metrics.information_ratio, 3) if metrics.information_ratio is not none else '-' }}</div></div>
       <div class="card"><div class="label">超额收益</div>
-        <div class="value {{ 'pos' if (metrics.excess_return|default(0)) >= 0 else 'neg' }}">
+        <div class="value {{ 'pos' if (metrics.excess_return|default(0, true)) >= 0 else 'neg' }}">
           {{ pct(metrics.excess_return) if metrics.excess_return is not none else '-' }}
         </div>
       </div>
@@ -187,6 +231,55 @@ footer {
     {% endif %}
   </section>
 
+  {% if split_comparison and split_comparison.rows %}
+  <section>
+    <h2>0b. 样本切分对照（训练 / 验证 / Holdout / 压力 / 全样本仅披露）</h2>
+    <p class="note">{{ split_comparison.note }}</p>
+    <table>
+      <thead>
+        <tr>
+          <th>切分</th>
+          <th>年份</th>
+          <th>run_id</th>
+          <th>总收益</th>
+          <th>年化</th>
+          <th>夏普</th>
+          <th>最大回撤</th>
+          <th>超额</th>
+          <th>IR</th>
+          <th>平均仓位</th>
+          <th>成交</th>
+          <th>可晋升</th>
+          <th>报告</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in split_comparison.rows %}
+        <tr>
+          <td><strong>{{ r.label }}</strong></td>
+          <td class="mono">{{ r.years_label or (r.metrics.years_label if r.metrics else '') or '—' }}</td>
+          <td class="mono">{{ r.run_id or '—' }}</td>
+          {% if r.missing %}
+          <td colspan="9" class="muted">尚未关联（请对应该阶段 <code>qr study decision --stage … --run</code> 后重跑本报告）</td>
+          {% else %}
+          <td class="{{ 'pos' if (r.metrics.total_return|default(0)) >= 0 else 'neg' }}">{{ pct(r.metrics.total_return) }}</td>
+          <td class="{{ 'pos' if (r.metrics.ann_return|default(0)) >= 0 else 'neg' }}">{{ pct(r.metrics.ann_return) }}</td>
+          <td>{{ fmt(r.metrics.sharpe, 3) }}</td>
+          <td class="neg">{{ pct(r.metrics.max_dd) }}</td>
+          <td class="{{ 'pos' if (r.metrics.excess_return|default(0, true)) >= 0 else 'neg' }}">{{ pct(r.metrics.excess_return) if r.metrics.excess_return is not none else '-' }}</td>
+          <td>{{ fmt(r.metrics.information_ratio, 3) if r.metrics.information_ratio is not none else '-' }}</td>
+          <td>{{ pct(r.metrics.mean_invested) if r.metrics.mean_invested is not none else '-' }}</td>
+          <td>{{ r.metrics.n_trades | default('-') }}</td>
+          <td>{{ '是' if r.metrics.promotable else ('—' if r.role == 'full' else '否') }}</td>
+          <td class="mono muted" style="font-size:0.78rem;word-break:break-all;">{{ r.report_zh or '-' }}</td>
+          {% endif %}
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  {% endif %}
+
   <section>
     <h2>1. 门禁与结论</h2>
     {% if not promotable %}
@@ -196,6 +289,9 @@ footer {
     {% endif %}
     <div class="kv">
       <div class="k">门禁结果</div><div>{{ '通过' if gates.passed else '未通过' }}</div>
+      <div class="k">主指标</div><div>{{ gates.primary_metric | default(gates_cfg.primary_metric if gates_cfg else 'absolute') }}</div>
+      <div class="k">绝对达标</div><div>{% if gates.absolute_ok is not none %}{{ '是' if gates.absolute_ok else '否' }}{% else %}-{% endif %}</div>
+      <div class="k">超额达标</div><div>{% if gates.excess_ok is not none %}{{ '是' if gates.excess_ok else '否' }}{% else %}-{% endif %}</div>
       <div class="k">最低 OOS 折数</div><div>{{ gates_cfg.min_oos_folds if gates_cfg else '-' }}</div>
       <div class="k">最低成交笔数</div><div>{{ gates_cfg.min_trades if gates_cfg else '-' }}</div>
       <div class="k">未通过原因</div><div>{{ gate_reasons | join('；') if gate_reasons else '无' }}</div>
@@ -326,8 +422,11 @@ footer {
         <tr><td>期末净值</td><td class="num">{{ money(metrics.end_nav) }}</td></tr>
         <tr><td>完整交易对数</td><td class="num">{{ metrics.n_trades }}</td></tr>
         <tr><td>覆盖交易日</td><td class="num">{{ metrics.n_sessions }}</td></tr>
+        <tr><td>平均仓位 mean_invested</td><td class="num">{{ pct(metrics.mean_invested) if metrics.mean_invested is not none else '-' }}</td></tr>
+        <tr><td>空仓天数占比</td><td class="num">{{ pct(metrics.empty_cash_share) if metrics.empty_cash_share is not none else '-' }}</td></tr>
       </tbody>
     </table>
+    <p class="muted">仓位定义：{{ metrics.invested_definition | default('1 - cash/nav') }}。事件稀疏时年化受平均仓位限制，须与收益同读。</p>
     <h3>相对基准 / 换手 / 容量</h3>
     <table>
       <thead><tr><th>指标</th><th class="num">数值</th></tr></thead>
@@ -346,21 +445,40 @@ footer {
         <tr><td>成交额占 ADV P90</td><td class="num">{{ pct(metrics.p90_participation) }}</td></tr>
       </tbody>
     </table>
-    {% if equity_svg %}
+    {% if equity_chart_json and equity_chart_json != 'null' %}
     <h3>净值曲线{% if metrics.benchmark_available %}（蓝=策略，棕虚线=基准，归一化）{% endif %}</h3>
+    <div class="chart-wrap">
+      <script type="application/json" id="chart-data-equity">{{ equity_chart_json | safe }}</script>
+      <div class="chart-host" data-chart="chart-data-equity" data-height="280"></div>
+      <p class="chart-hint">鼠标悬停 / 触控查看具体日期与数值。</p>
+    </div>
+    {% elif equity_svg %}
+    <h3>净值曲线</h3>
     <div class="chart-wrap">{{ equity_svg | safe }}</div>
+    {% endif %}
     {% if equity_summary %}
     <p class="muted">区间：{{ equity_summary.start_session }} → {{ equity_summary.end_session }}；
       峰值净值 {{ money(equity_summary.peak_nav) }}；最大持仓数 {{ equity_summary.max_positions }}</p>
     {% endif %}
-    {% endif %}
-    {% if drawdown_svg %}
+    {% if drawdown_chart_json and drawdown_chart_json != 'null' %}
+    <h3>回撤曲线</h3>
+    <div class="chart-wrap">
+      <script type="application/json" id="chart-data-drawdown">{{ drawdown_chart_json | safe }}</script>
+      <div class="chart-host" data-chart="chart-data-drawdown" data-height="220"></div>
+    </div>
+    {% elif drawdown_svg %}
     <h3>回撤曲线</h3>
     <div class="chart-wrap">{{ drawdown_svg | safe }}</div>
     {% endif %}
     {% if yearly %}
     <h3>分年绩效（年化 / 超额）</h3>
-    {% if yearly_svg %}
+    {% if yearly_chart_json and yearly_chart_json != 'null' %}
+    <div class="chart-wrap">
+      <script type="application/json" id="chart-data-yearly">{{ yearly_chart_json | safe }}</script>
+      <div class="chart-host" data-chart="chart-data-yearly" data-height="260"></div>
+      <p class="muted">柱：蓝色=策略年化收益；绿/红=年化超额（相对基准）。悬停查看数值。</p>
+    </div>
+    {% elif yearly_svg %}
     <div class="chart-wrap">{{ yearly_svg | safe }}</div>
     <p class="muted">柱：蓝色=策略年化收益；绿/红=年化超额（相对基准）。</p>
     {% endif %}
@@ -546,5 +664,287 @@ footer {
 
   <footer>由 qresearch 自动生成 · 事件驱动研究内核 · 本报告仅供研究用途</footer>
 </div>
+<script>
+(function () {
+  function niceNum(range, round) {
+    var exp = Math.floor(Math.log10(Math.max(Math.abs(range), 1e-12)));
+    var frac = range / Math.pow(10, exp);
+    var nice;
+    if (round) {
+      if (frac < 1.5) nice = 1;
+      else if (frac < 3) nice = 2;
+      else if (frac < 7) nice = 5;
+      else nice = 10;
+    } else {
+      if (frac <= 1) nice = 1;
+      else if (frac <= 2) nice = 2;
+      else if (frac <= 5) nice = 5;
+      else nice = 10;
+    }
+    return nice * Math.pow(10, exp);
+  }
+  function niceTicks(lo, hi, maxTicks) {
+    maxTicks = maxTicks || 6;
+    if (!(isFinite(lo) && isFinite(hi))) return [0, 1];
+    if (lo === hi) {
+      var pad = Math.abs(lo) * 0.05 || 1;
+      lo -= pad; hi += pad;
+    }
+    var range = niceNum(hi - lo, false);
+    var step = niceNum(range / Math.max(maxTicks - 1, 1), true);
+    var start = Math.floor(lo / step) * step;
+    var end = Math.ceil(hi / step) * step;
+    var ticks = [];
+    for (var v = start; v <= end + step * 0.5; v += step) ticks.push(v);
+    if (ticks.length < 2) ticks = [lo, hi];
+    return ticks;
+  }
+  function xTickIdx(n, maxTicks) {
+    maxTicks = Math.min(maxTicks || 8, n);
+    if (n <= maxTicks) {
+      var all = [];
+      for (var i = 0; i < n; i++) all.push(i);
+      return all;
+    }
+    var idx = [];
+    for (var k = 0; k < maxTicks; k++) {
+      idx.push(Math.round(k * (n - 1) / (maxTicks - 1)));
+    }
+    return idx.filter(function (v, i, a) { return a.indexOf(v) === i; });
+  }
+  function fmtY(v, fmt) {
+    if (fmt === "pct") return (v * 100).toFixed(2) + "%";
+    if (fmt === "ratio") return v.toFixed(3);
+    if (Math.abs(v) >= 1e6) return (v / 1e6).toFixed(2) + "M";
+    if (Math.abs(v) >= 1e4) return (v / 1e3).toFixed(1) + "k";
+    return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  }
+  function shortLabel(s) {
+    s = String(s || "");
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+    return s.length > 12 ? s.slice(0, 10) : s;
+  }
+  function collectValues(data) {
+    var vals = [];
+    (data.series || []).forEach(function (s) {
+      (s.values || []).forEach(function (v) {
+        if (typeof v === "number" && isFinite(v)) vals.push(v);
+      });
+    });
+    return vals;
+  }
+  function renderLine(host, data, height) {
+    var labels = data.labels || [];
+    var n = labels.length;
+    if (n < 2) return;
+    var width = 960;
+    var padL = 58, padR = 18, padT = 18, padB = 42;
+    var plotW = width - padL - padR;
+    var plotH = height - padT - padB;
+    var vals = collectValues(data);
+    var lo = Math.min.apply(null, vals);
+    var hi = Math.max.apply(null, vals);
+    if (typeof data.y_max === "number") hi = Math.max(hi, data.y_max);
+    if (typeof data.y_min === "number") lo = Math.min(lo, data.y_min);
+    if (data.y_format === "pct") hi = Math.max(hi, 0);
+    var yTicks = niceTicks(lo, hi, 6);
+    lo = yTicks[0];
+    hi = yTicks[yTicks.length - 1];
+    var span = (hi - lo) || 1;
+    function xy(i, v) {
+      return [
+        padL + plotW * i / (n - 1),
+        padT + plotH * (1 - (v - lo) / span)
+      ];
+    }
+    var ns = "http://www.w3.org/2000/svg";
+    var svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("viewBox", "0 0 " + width + " " + height);
+    svg.setAttribute("role", "img");
+    function el(name, attrs) {
+      var e = document.createElementNS(ns, name);
+      Object.keys(attrs || {}).forEach(function (k) { e.setAttribute(k, attrs[k]); });
+      return e;
+    }
+    svg.appendChild(el("rect", { x: 0, y: 0, width: width, height: height, fill: data.y_format === "pct" && data.series[0] && data.series[0].fill ? "#fffaf8" : "#fbfdff" }));
+    yTicks.forEach(function (tv) {
+      var y = padT + plotH * (1 - (tv - lo) / span);
+      svg.appendChild(el("line", { x1: padL, y1: y, x2: padL + plotW, y2: y, stroke: "#e8eef5", "stroke-width": "1" }));
+      svg.appendChild(el("text", { x: padL - 8, y: y + 4, fill: "#5b6b7c", "font-size": "11", "text-anchor": "end" })).textContent = fmtY(tv, data.y_format);
+    });
+    xTickIdx(n, 8).forEach(function (i) {
+      var x = padL + plotW * i / (n - 1);
+      svg.appendChild(el("line", { x1: x, y1: padT + plotH, x2: x, y2: padT + plotH + 4, stroke: "#c5d0dc" }));
+      svg.appendChild(el("text", { x: x, y: height - 12, fill: "#5b6b7c", "font-size": "10", "text-anchor": "middle" })).textContent = shortLabel(labels[i]);
+    });
+    (data.series || []).forEach(function (s) {
+      var pts = [];
+      for (var i = 0; i < n; i++) {
+        var p = xy(i, s.values[i]);
+        pts.push(p[0].toFixed(1) + "," + p[1].toFixed(1));
+      }
+      if (s.fill) {
+        var area = padL.toFixed(1) + "," + padT.toFixed(1) + " " + pts.join(" ") + " " + (padL + plotW).toFixed(1) + "," + padT.toFixed(1);
+        svg.appendChild(el("polygon", { points: area, fill: (s.color || "#b42318") + "22" }));
+      }
+      var poly = el("polyline", {
+        points: pts.join(" "),
+        fill: "none",
+        stroke: s.color || "#0b5cab",
+        "stroke-width": "2.2"
+      });
+      if (s.dash) poly.setAttribute("stroke-dasharray", "5 3");
+      svg.appendChild(poly);
+    });
+    var cross = el("line", { x1: 0, y1: padT, x2: 0, y2: padT + plotH, stroke: "#64748b", "stroke-width": "1", "stroke-dasharray": "3 3", visibility: "hidden" });
+    svg.appendChild(cross);
+    var dots = (data.series || []).map(function (s) {
+      var c = el("circle", { r: 4, fill: s.color || "#0b5cab", stroke: "#fff", "stroke-width": "1.5", visibility: "hidden" });
+      svg.appendChild(c);
+      return c;
+    });
+    var tip = document.createElement("div");
+    tip.className = "chart-tooltip";
+    host.appendChild(tip);
+    var legend = document.createElement("div");
+    legend.className = "chart-legend";
+    (data.series || []).forEach(function (s) {
+      var span = document.createElement("span");
+      span.innerHTML = "<i style=\"background:" + (s.color || "#0b5cab") + (s.dash ? ";border-top:2px dashed " + (s.color || "#0b5cab") + ";height:0;background:transparent" : "") + "\"></i>" + (s.name || "");
+      legend.appendChild(span);
+    });
+    host.appendChild(legend);
+    host.appendChild(svg);
+    function nearestIndex(clientX) {
+      var rect = svg.getBoundingClientRect();
+      var xSvg = (clientX - rect.left) / rect.width * width;
+      var t = (xSvg - padL) / plotW;
+      var i = Math.round(t * (n - 1));
+      return Math.max(0, Math.min(n - 1, i));
+    }
+    function show(i, clientX, clientY) {
+      var x = padL + plotW * i / (n - 1);
+      cross.setAttribute("x1", x);
+      cross.setAttribute("x2", x);
+      cross.setAttribute("visibility", "visible");
+      var lines = ["<div class=\"tt-date\">" + shortLabel(labels[i]) + "</div>"];
+      (data.series || []).forEach(function (s, si) {
+        var p = xy(i, s.values[i]);
+        dots[si].setAttribute("cx", p[0]);
+        dots[si].setAttribute("cy", p[1]);
+        dots[si].setAttribute("visibility", "visible");
+        lines.push((s.name || "系列") + "：<b>" + fmtY(s.values[i], data.y_format) + "</b>");
+      });
+      tip.innerHTML = lines.join("<br>");
+      tip.style.display = "block";
+      var hr = host.getBoundingClientRect();
+      var left = clientX - hr.left + 12;
+      var top = clientY - hr.top - 12;
+      if (left + 160 > hr.width) left = clientX - hr.left - 170;
+      if (top < 8) top = 8;
+      tip.style.left = left + "px";
+      tip.style.top = top + "px";
+    }
+    function hide() {
+      cross.setAttribute("visibility", "hidden");
+      dots.forEach(function (d) { d.setAttribute("visibility", "hidden"); });
+      tip.style.display = "none";
+    }
+    svg.addEventListener("mousemove", function (ev) { show(nearestIndex(ev.clientX), ev.clientX, ev.clientY); });
+    svg.addEventListener("mouseleave", hide);
+    svg.addEventListener("touchstart", function (ev) {
+      if (!ev.touches[0]) return;
+      show(nearestIndex(ev.touches[0].clientX), ev.touches[0].clientX, ev.touches[0].clientY);
+    }, { passive: true });
+  }
+  function renderBar(host, data, height) {
+    var labels = data.labels || [];
+    var n = labels.length;
+    if (!n) return;
+    var width = 960;
+    var padL = 58, padR = 18, padT = 20, padB = 44;
+    var plotW = width - padL - padR;
+    var plotH = height - padT - padB;
+    var vals = collectValues(data);
+    vals.push(0);
+    var lo = Math.min.apply(null, vals);
+    var hi = Math.max.apply(null, vals);
+    var yTicks = niceTicks(lo, hi, 6);
+    lo = yTicks[0];
+    hi = yTicks[yTicks.length - 1];
+    var span = (hi - lo) || 1;
+    var ns = "http://www.w3.org/2000/svg";
+    var svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("viewBox", "0 0 " + width + " " + height);
+    function el(name, attrs) {
+      var e = document.createElementNS(ns, name);
+      Object.keys(attrs || {}).forEach(function (k) { e.setAttribute(k, attrs[k]); });
+      return e;
+    }
+    svg.appendChild(el("rect", { x: 0, y: 0, width: width, height: height, fill: "#fbfdff" }));
+    yTicks.forEach(function (tv) {
+      var y = padT + plotH * (1 - (tv - lo) / span);
+      svg.appendChild(el("line", { x1: padL, y1: y, x2: padL + plotW, y2: y, stroke: "#e8eef5" }));
+      svg.appendChild(el("text", { x: padL - 8, y: y + 4, fill: "#5b6b7c", "font-size": "11", "text-anchor": "end" })).textContent = fmtY(tv, data.y_format);
+    });
+    var zeroY = padT + plotH * (1 - (0 - lo) / span);
+    svg.appendChild(el("line", { x1: padL, y1: zeroY, x2: padL + plotW, y2: zeroY, stroke: "#c5d0dc" }));
+    var groupW = plotW / n;
+    var nSeries = (data.series || []).length;
+    var barW = groupW * (nSeries > 1 ? 0.28 : 0.5);
+    var hitZones = [];
+    labels.forEach(function (lab, i) {
+      var cx = padL + groupW * (i + 0.5);
+      (data.series || []).forEach(function (s, j) {
+        var val = s.values[i];
+        var yVal = padT + plotH * (1 - (val - lo) / span);
+        var y = Math.min(yVal, zeroY);
+        var h = Math.max(Math.abs(zeroY - yVal), 1);
+        var x = nSeries > 1 ? cx - barW - 1 + j * (barW + 2) : cx - barW / 2;
+        var color = val < 0 && s.neg_color ? s.neg_color : (s.color || "#0b5cab");
+        var rect = el("rect", { x: x, y: y, width: barW, height: h, fill: color, opacity: "0.88" });
+        svg.appendChild(rect);
+      });
+      svg.appendChild(el("text", { x: cx, y: height - 14, fill: "#5b6b7c", "font-size": "11", "text-anchor": "middle" })).textContent = lab;
+      hitZones.push({ i: i, x0: padL + groupW * i, x1: padL + groupW * (i + 1) });
+    });
+    var tip = document.createElement("div");
+    tip.className = "chart-tooltip";
+    host.appendChild(tip);
+    host.appendChild(svg);
+    function showAt(i, clientX, clientY) {
+      var lines = ["<div class=\"tt-date\">" + labels[i] + "</div>"];
+      (data.series || []).forEach(function (s) {
+        lines.push((s.name || "") + "：<b>" + fmtY(s.values[i], data.y_format) + "</b>");
+      });
+      tip.innerHTML = lines.join("<br>");
+      tip.style.display = "block";
+      var hr = host.getBoundingClientRect();
+      tip.style.left = Math.min(hr.width - 170, Math.max(8, clientX - hr.left + 12)) + "px";
+      tip.style.top = Math.max(8, clientY - hr.top - 12) + "px";
+    }
+    svg.addEventListener("mousemove", function (ev) {
+      var rect = svg.getBoundingClientRect();
+      var xSvg = (ev.clientX - rect.left) / rect.width * width;
+      var hit = hitZones.find(function (z) { return xSvg >= z.x0 && xSvg < z.x1; });
+      if (hit) showAt(hit.i, ev.clientX, ev.clientY);
+      else tip.style.display = "none";
+    });
+    svg.addEventListener("mouseleave", function () { tip.style.display = "none"; });
+  }
+  function mount(host) {
+    var id = host.getAttribute("data-chart");
+    var node = id ? document.getElementById(id) : null;
+    if (!node) return;
+    var data;
+    try { data = JSON.parse(node.textContent || "null"); } catch (e) { return; }
+    if (!data) return;
+    var height = parseInt(host.getAttribute("data-height") || "260", 10) || 260;
+    if (data.type === "bar") renderBar(host, data, height);
+    else renderLine(host, data, height);
+  }
+  document.querySelectorAll(".chart-host[data-chart]").forEach(mount);
+})();
+</script>
 </body>
 </html>

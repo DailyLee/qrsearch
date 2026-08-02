@@ -58,7 +58,10 @@ def _entry_filter_ok(
     ref = _ref_close(panel, instrument, session, decision_date, ef.ref)
     if ref is None or ref <= 0:
         return False, "missing_ref_close"
-    ret = float(bar[config.execution.price]) / ref - 1.0
+    px = bar.get(config.execution.price)
+    if px is None:
+        return False, "missing_entry_price"
+    ret = float(px) / ref - 1.0
     if ef.min_open_ret is not None and ret < ef.min_open_ret:
         return False, "entry_filter_min"
     if ef.max_open_ret is not None and ret > ef.max_open_ret:
@@ -164,9 +167,6 @@ def run_backtest(
                 continue
             # eligibility besides limit checked in pretrade
             bar = panel.get(it.instrument, session)
-            ok_f, why_f = _entry_filter_ok(
-                config, panel, it.instrument, session, it.decision_date, bar or {}
-            )
             if bar is None:
                 still_pending.append(p)
                 result.rejects.append(
@@ -177,6 +177,9 @@ def run_backtest(
                     }
                 )
                 continue
+            ok_f, why_f = _entry_filter_ok(
+                config, panel, it.instrument, session, it.decision_date, bar
+            )
             if not ok_f:
                 # retry later if validity remains
                 if session < expiry:
@@ -233,6 +236,12 @@ def run_backtest(
                     continue
                 state.cash -= total
                 state.fees_paid += fee
+                ind = None
+                if it.features:
+                    field = config.portfolio.industry_field or "features.industry"
+                    raw = it.features.get(field)
+                    if raw is not None and str(raw).strip():
+                        ind = str(raw).strip()
                 state.positions[it.instrument] = Position(
                     instrument=it.instrument,
                     qty=qty,
@@ -240,6 +249,7 @@ def run_backtest(
                     entry_session=session,
                     exit_intent_date=it.exit_intent_date,
                     cost_basis=notional,
+                    industry=ind,
                 )
                 result.trades.append(
                     {

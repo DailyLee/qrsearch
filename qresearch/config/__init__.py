@@ -7,6 +7,14 @@ import yaml
 
 from qresearch.config.models import AppSettings, ResearchConfig
 
+# Set by CLI global --board (and similar) so pipeline/ops load paths pick it up.
+_CLI_CONFIG_OVERRIDES: dict[str, Any] = {}
+
+
+def set_cli_config_overrides(overrides: dict[str, Any] | None) -> None:
+    global _CLI_CONFIG_OVERRIDES
+    _CLI_CONFIG_OVERRIDES = dict(overrides or {})
+
 
 def load_yaml(path: str | Path | None) -> dict[str, Any]:
     if path is None:
@@ -23,6 +31,8 @@ def load_yaml(path: str | Path | None) -> dict[str, Any]:
 
 def load_research_config(path: str | Path | None = None, overrides: dict | None = None) -> ResearchConfig:
     data = load_yaml(path)
+    if _CLI_CONFIG_OVERRIDES:
+        data = deep_merge(data, _CLI_CONFIG_OVERRIDES)
     if overrides:
         data = deep_merge(data, overrides)
     return ResearchConfig.model_validate(data)
@@ -49,4 +59,5 @@ __all__ = [
     "load_yaml",
     "get_settings",
     "deep_merge",
+    "set_cli_config_overrides",
 ]

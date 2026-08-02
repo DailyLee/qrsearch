@@ -6,6 +6,9 @@ from pathlib import Path
 from qresearch.config.models import ResearchConfig
 from qresearch.engines.analysis.report import (
     build_conclusion,
+    build_drawdown_chart,
+    build_equity_chart,
+    build_yearly_chart,
     enrich_conclusion,
     evaluate_gates,
     render_html,
@@ -79,7 +82,13 @@ def test_summarize_trades_and_chinese_html(tmp_path: Path):
     )
     equity = [
         {"session": "2025-01-01", "cash": 100000, "nav": 100000, "n_positions": 0},
+        {"session": "2025-01-05", "cash": 95000, "nav": 102000, "n_positions": 1},
         {"session": "2025-01-10", "cash": 90000, "nav": 105000, "n_positions": 1},
+        {"session": "2025-01-15", "cash": 88000, "nav": 103500, "n_positions": 1},
+    ]
+    conclusion["metrics"]["yearly"] = [
+        {"year": 2024, "ann_return": 0.12, "ann_excess": 0.03},
+        {"year": 2025, "ann_return": -0.05, "ann_excess": -0.02},
     ]
     enriched = enrich_conclusion(
         conclusion,
@@ -88,6 +97,9 @@ def test_summarize_trades_and_chinese_html(tmp_path: Path):
         rejects=[{"session": "2025-01-02", "instrument": "000003.SZ", "reason": "limit_up"}],
         artifact_links={"trades": "artifacts/trades.csv"},
     )
+    assert enriched.get("equity_chart") and enriched["equity_chart"]["type"] == "line"
+    assert enriched.get("drawdown_chart")
+    assert enriched.get("yearly_chart") and enriched["yearly_chart"]["type"] == "bar"
     html = render_html(enriched)
     assert "量化研究报告" in html
     assert "因子分析" in html
@@ -95,6 +107,10 @@ def test_summarize_trades_and_chinese_html(tmp_path: Path):
     assert "回测绩效" in html
     assert "交易统计" in html
     assert "止盈" in html
+    assert 'id="chart-data-equity"' in html
+    assert "chart-host" in html
+    assert "qr-charts" not in html  # inline IIFE, no external lib
+    assert "mousemove" in html
 
     html_path, json_path = write_report(tmp_path / "report", conclusion)
     assert html_path.exists()
@@ -103,3 +119,29 @@ def test_summarize_trades_and_chinese_html(tmp_path: Path):
     payload = json.loads(json_path.read_text(encoding="utf-8"))
     assert payload["locale"] == "zh-CN"
     assert "equity_svg" not in payload
+    assert "equity_chart" not in payload
+
+    # Pre-enriched conclusion keeps charts through write_report; heavy keys stay out of JSON.
+    html_full, json_full = write_report(tmp_path / "report_full", enriched)
+    full_payload = json.loads(json_full.read_text(encoding="utf-8"))
+    assert "equity_chart" not in full_payload
+    assert "chart-host" in html_full.read_text(encoding="utf-8")
+
+
+def test_chart_payload_builders():
+    equity = [
+        {"session": f"2024-01-{d:02d}", "nav": 100000 + d * 100}
+        for d in range(1, 12)
+    ]
+    eq = build_equity_chart(equity)
+    assert eq is not None
+    assert len(eq["labels"]) == 11
+    assert eq["y_format"] == "nav"
+    dd = build_drawdown_chart(equity)
+    assert dd is not None
+    assert dd["y_format"] == "pct"
+    y = build_yearly_chart(
+        [{"year": 2023, "ann_return": 0.1, "ann_excess": None}, {"year": 2024, "ann_return": 0.2, "ann_excess": 0.05}]
+    )
+    assert y is not None
+    assert len(y["series"]) == 2

@@ -92,6 +92,10 @@ def test_sample_profile_years():
     prof = build_sample_profile(ev, ["features.score"])
     assert prof["n_events"] == 12
     assert "2019" in prof["years"] or "2020" in prof["years"]
+    assert "years_span" in prof
+    for y, meta in prof["years_span"].items():
+        assert meta["n"] == prof["years"][y]
+        assert "entry_min" in meta and "entry_max" in meta
 
 
 def test_quantile_and_icir_shapes():

@@ -5,11 +5,14 @@ from pathlib import Path
 
 import pytest
 
+from qresearch.config import load_research_config, set_cli_config_overrides
 from qresearch.config.models import IngestConfig, ResearchConfig
 from qresearch.engines.data.fingerprint import fingerprint_paths
 from qresearch.engines.data.ingest import (
     IngestError,
     _coalesce_numeric,
+    filter_events_by_board,
+    is_limit20_board,
     load_events,
     parse_date,
     resolve_event_paths,
@@ -100,3 +103,66 @@ def test_fingerprint_paths(tmp_path: Path):
     assert fp1 != "unavailable"
     assert len(fp1) == 40
     assert fingerprint_paths([]) == "unavailable"
+
+
+def test_is_limit20_board():
+    assert is_limit20_board("688001.SH")
+    assert is_limit20_board("689009.SH")
+    assert is_limit20_board("300750.SZ")
+    assert is_limit20_board("301001.SZ")
+    assert not is_limit20_board("600000.SH")
+    assert not is_limit20_board("000001.SZ")
+    assert not is_limit20_board("002532.SZ")
+
+
+def test_board_filter_default_limit10(tmp_path: Path):
+    csv = tmp_path / "mixed.csv"
+    csv.write_text(
+        "code,buy_date,sell_date,box_quality\n"
+        "sz.000001,2024/1/2,2024/1/10,0.9\n"
+        "sh.688001,2024/1/3,2024/1/12,0.91\n"
+        "sz.300750,2024/1/4,2024/1/13,0.92\n"
+        "sz.301001,2024/1/5,2024/1/14,0.93\n"
+        "sh.600000,2024/1/6,2024/1/15,0.94\n",
+        encoding="utf-8",
+    )
+    default_df = load_events(csv, ResearchConfig(ingest=IngestConfig()))
+    assert set(default_df["instrument"].to_list()) == {"000001.SZ", "600000.SH"}
+
+    lim20 = load_events(csv, ResearchConfig(ingest=IngestConfig(board="limit20")))
+    assert set(lim20["instrument"].to_list()) == {"688001.SH", "300750.SZ", "301001.SZ"}
+
+    all_df = load_events(csv, ResearchConfig(ingest=IngestConfig(board="all")))
+    assert all_df.height == 5
+
+    summary = validate_events(csv, ResearchConfig(ingest=IngestConfig(board="limit10")))
+    assert summary["board"] == "limit10"
+    assert summary["n_events"] == 2
+    assert summary["n_limit20"] == 3
+    assert summary["n_limit10"] == 2
+
+    empty = filter_events_by_board(default_df, "limit20")
+    assert empty.height == 0
+
+    lim20_only = tmp_path / "lim20_only.csv"
+    lim20_only.write_text(
+        "code,buy_date,sell_date\nsz.300750,2024/1/3,2024/1/12\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(IngestError, match="board"):
+        load_events(lim20_only, ResearchConfig(ingest=IngestConfig(board="limit10")))
+
+
+def test_example_yaml_board_default_and_cli_override():
+    cfg = load_research_config("configs/examples/event_factors.yaml")
+    assert cfg.ingest.board == "limit10"
+
+    set_cli_config_overrides({"ingest": {"board": "limit20"}})
+    try:
+        overridden = load_research_config("configs/examples/event_factors.yaml")
+        assert overridden.ingest.board == "limit20"
+    finally:
+        set_cli_config_overrides(None)
+
+    restored = load_research_config("configs/examples/event_factors.yaml")
+    assert restored.ingest.board == "limit10"

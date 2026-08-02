@@ -62,6 +62,37 @@ def test_entry_filter_min_max_bounds(panel: PricePanel, sessions):
     )
 
 
+def test_entry_filter_empty_bar_and_data_gap(panel: PricePanel, events: pl.DataFrame, sessions):
+    """Missing panel bar → data_gap reject; empty open → missing_entry_price."""
+    decision = sessions[2]
+    session = sessions[2]
+    cfg = ResearchConfig(
+        execution=ExecutionConfig(
+            price="open",
+            entry_filter=EntryFilterConfig(
+                enabled=True,
+                max_open_ret=0.5,
+                ref="decision_prior_close",
+            ),
+        )
+    )
+    assert _entry_filter_ok(cfg, panel, "AAA001.SZ", session, decision, {}) == (
+        False,
+        "missing_entry_price",
+    )
+    assert _entry_filter_ok(
+        cfg, panel, "AAA001.SZ", session, decision, {"open": None}
+    ) == (False, "missing_entry_price")
+
+    # instrument with no bars in panel → buy rejected as data_gap
+    orphan = events.head(1).with_columns(pl.lit("ZZZ999.SH").alias("instrument"))
+    res = run_backtest(orphan, panel, cfg)
+    assert any(r.get("reason") == "data_gap" for r in res.rejects)
+    assert not any(
+        t.get("side") == "buy" and t.get("instrument") == "ZZZ999.SH" for t in res.trades
+    )
+
+
 def test_lag_sessions_delays_first_buy(panel: PricePanel, events: pl.DataFrame, sessions):
     ev = events.head(1)
     entry = sessions[1]

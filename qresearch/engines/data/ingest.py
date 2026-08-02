@@ -57,6 +57,31 @@ def to_ts_code(raw: str) -> str:
     return f"{code}.SZ"
 
 
+# 20% limit boards: 科创 688/689 + 创业 300/301
+_LIMIT20_PREFIXES = ("688", "689", "300", "301")
+
+
+def is_limit20_board(instrument: str) -> bool:
+    """科创板+创业板（约 20% 涨跌停）：688/689/300/301。"""
+    code = str(instrument).strip().split(".", 1)[0]
+    return code.startswith(_LIMIT20_PREFIXES)
+
+
+def _limit20_mask() -> pl.Expr:
+    prefix = pl.col("instrument").str.slice(0, 3)
+    return prefix.is_in(list(_LIMIT20_PREFIXES))
+
+
+def filter_events_by_board(df: pl.DataFrame, board: str) -> pl.DataFrame:
+    if board == "all":
+        return df
+    if board == "limit20":
+        return df.filter(_limit20_mask())
+    if board == "limit10":
+        return df.filter(~_limit20_mask())
+    raise IngestError(f"unknown ingest.board={board!r}; use limit10|limit20|all")
+
+
 def parse_date(value: object, formats: list[str]) -> date:
     if value is None or (isinstance(value, float) and str(value) == "nan"):
         raise IngestError("empty date")
@@ -121,10 +146,14 @@ def load_events(
         frames.append(_normalize_frame(raw, ingest, source=str(fp)))
     df = pl.concat(frames, how="diagonal_relaxed")
     # dedupe
-    before = df.height
     df = df.unique(subset=["instrument", "entry_intent_date"], keep="first")
+    board = getattr(ingest, "board", "limit10") or "limit10"
+    df = filter_events_by_board(df, board)
     if df.height == 0:
-        raise IngestError("no valid events after ingest")
+        raise IngestError(
+            f"no valid events after ingest (board={board!r}); "
+            "try ingest.board=all|limit20|limit10 or check CSV"
+        )
     return df.sort(["entry_intent_date", "instrument"])
 
 
@@ -227,10 +256,25 @@ def _normalize_frame(raw: pl.DataFrame, ingest: IngestConfig, source: str) -> pl
 
 
 def validate_events(paths: str | Path | Iterable[str | Path], config: ResearchConfig | None = None) -> dict:
-    df = load_events(paths, config)
+    ingest = config.ingest if isinstance(config, ResearchConfig) else IngestConfig()
+    # Count boards before filter (same parse path, board=all) for disclosure.
+    all_cfg = ingest.model_copy(update={"board": "all"})
+    raw = load_events(paths, all_cfg)
+    n_limit20 = int(raw.filter(_limit20_mask()).height)
+    n_limit10 = int(raw.height - n_limit20)
+    board = ingest.board
+    df = filter_events_by_board(raw, board)
+    if df.height == 0:
+        raise IngestError(
+            f"no valid events after ingest (board={board!r}); "
+            "try ingest.board=all|limit20|limit10 or check CSV"
+        )
     return {
         "n_events": df.height,
         "n_instruments": df["instrument"].n_unique(),
+        "board": board,
+        "n_limit20": n_limit20,
+        "n_limit10": n_limit10,
         "entry_min": str(df["entry_intent_date"].min()),
         "entry_max": str(df["entry_intent_date"].max()),
         "feature_cols": [c for c in df.columns if c.startswith("features.")],

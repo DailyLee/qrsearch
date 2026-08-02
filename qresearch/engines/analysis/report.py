@@ -29,9 +29,13 @@ def evaluate_gates(
 
     - passed / structural_passed: research may continue
     - promotable: structural AND economic (when require_economic_for_promote)
+    - primary_metric absolute|excess: which thresholds drive economic_passed
     """
     structural_reasons: list[str] = []
     economic_reasons: list[str] = []
+    disclosed_absolute: list[str] = []
+    absolute_fail: list[str] = []
+    excess_fail: list[str] = []
 
     if n_oos_folds < gates.min_oos_folds:
         structural_reasons.append(f"oos_folds<{gates.min_oos_folds}")
@@ -42,19 +46,56 @@ def evaluate_gates(
     if gates.pit_strict and pit_status == "fail":
         structural_reasons.append("pit_audit_fail")
 
+    primary = getattr(gates, "primary_metric", None) or "absolute"
+
+    # Absolute track
     if gates.min_oos_sharpe is not None and float(metrics.get("sharpe") or 0) < gates.min_oos_sharpe:
-        economic_reasons.append("sharpe_below_min")
+        absolute_fail.append("sharpe_below_min")
+    if gates.min_deflated_sharpe is not None:
+        dsr = metrics.get("deflated_sharpe")
+        if dsr is None or float(dsr) < float(gates.min_deflated_sharpe):
+            absolute_fail.append("deflated_sharpe_below_min")
+
+    # Drawdown always economic (risk)
     if gates.max_oos_drawdown is not None and abs(float(metrics.get("max_dd") or 0)) > abs(
         gates.max_oos_drawdown
     ):
         economic_reasons.append("drawdown_above_max")
-    if gates.min_deflated_sharpe is not None:
-        dsr = metrics.get("deflated_sharpe")
-        if dsr is None or float(dsr) < float(gates.min_deflated_sharpe):
-            economic_reasons.append("deflated_sharpe_below_min")
+
+    # Excess track (optional thresholds)
+    if gates.min_ann_excess is not None:
+        ax = metrics.get("ann_excess")
+        if ax is None or float(ax) < float(gates.min_ann_excess):
+            excess_fail.append("ann_excess_below_min")
+    if gates.min_information_ratio is not None:
+        ir = metrics.get("information_ratio")
+        if ir is None or float(ir) < float(gates.min_information_ratio):
+            excess_fail.append("information_ratio_below_min")
+
+    if primary == "excess":
+        economic_reasons.extend(excess_fail)
+        disclosed_absolute.extend(absolute_fail)
+        # if no excess thresholds configured, require IR disclose-fail when primary=excess
+        if gates.min_information_ratio is None and gates.min_ann_excess is None:
+            ir = metrics.get("information_ratio")
+            if ir is None:
+                economic_reasons.append("excess_primary_needs_ir_or_ann_excess_gate")
+    else:
+        economic_reasons.extend(absolute_fail)
+        # optional excess thresholds add to economic when set
+        economic_reasons.extend(excess_fail)
 
     structural_passed = len(structural_reasons) == 0
     economic_passed = len(economic_reasons) == 0
+    abs_dd_fail = gates.max_oos_drawdown is not None and abs(
+        float(metrics.get("max_dd") or 0)
+    ) > abs(gates.max_oos_drawdown)
+    absolute_ok = len(absolute_fail) == 0 and not abs_dd_fail
+    if gates.min_ann_excess is None and gates.min_information_ratio is None:
+        excess_ok = True  # thresholds off → disclose-only
+    else:
+        excess_ok = len(excess_fail) == 0
+
     reasons = structural_reasons + economic_reasons
     if gates.require_economic_for_promote:
         promotable = structural_passed and economic_passed
@@ -68,6 +109,10 @@ def evaluate_gates(
         "reasons": reasons,
         "structural_reasons": structural_reasons,
         "economic_reasons": economic_reasons,
+        "primary_metric": primary,
+        "absolute_ok": absolute_ok,
+        "excess_ok": excess_ok,
+        "disclosed_absolute": disclosed_absolute,
     }
 
 
@@ -84,7 +129,7 @@ def build_conclusion(
     pit_audit: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
-        "schema_version": "1.4",
+        "schema_version": "1.5",
         "locale": "zh-CN",
         "title": "量化研究报告",
         "run_id": run_id,
@@ -93,6 +138,7 @@ def build_conclusion(
         "gates": gates_result,
         "gates_cfg": config.gates.model_dump(),
         "hypothesis": config.hypothesis.model_dump(),
+        "evaluation": config.evaluation.model_dump(),
         "n_events": n_events,
         "metrics": metrics,
         "signals": config.signals.model_dump(),
@@ -396,6 +442,105 @@ def yearly_bars_to_svg(yearly: list[dict[str, Any]] | None, *, width: int = 960,
     return "\n".join(parts)
 
 
+def build_equity_chart(
+    equity: list[dict[str, Any]] | pl.DataFrame | None,
+    *,
+    bench_navs: list[float] | None = None,
+) -> dict[str, Any] | None:
+    """Payload for interactive equity chart (HTML)."""
+    rows = _equity_rows(equity)
+    if len(rows) < 2:
+        return None
+    labels = [str(r.get("session") or "") for r in rows]
+    navs = [_safe_float(r.get("nav")) or 0.0 for r in rows]
+    series: list[dict[str, Any]] = []
+    if bench_navs and len(bench_navs) == len(navs) and navs[0] > 0 and bench_navs[0] > 0:
+        series.append(
+            {
+                "name": "策略",
+                "color": "#0b5cab",
+                "values": [n / navs[0] for n in navs],
+            }
+        )
+        series.append(
+            {
+                "name": "基准",
+                "color": "#9a6700",
+                "dash": True,
+                "values": [n / bench_navs[0] for n in bench_navs],
+            }
+        )
+        y_format = "ratio"
+        title = "策略 vs 基准（归一化净值）"
+    else:
+        series.append({"name": "策略净值", "color": "#0b5cab", "values": navs})
+        y_format = "nav"
+        title = "净值曲线"
+    return {
+        "type": "line",
+        "title": title,
+        "labels": labels,
+        "series": series,
+        "y_format": y_format,
+    }
+
+
+def build_drawdown_chart(
+    equity: list[dict[str, Any]] | pl.DataFrame | None,
+) -> dict[str, Any] | None:
+    rows = _equity_rows(equity)
+    if len(rows) < 2:
+        return None
+    navs = [_safe_float(r.get("nav")) or 0.0 for r in rows]
+    peak = navs[0]
+    dds: list[float] = []
+    for n in navs:
+        peak = max(peak, n)
+        dds.append(n / peak - 1.0 if peak > 0 else 0.0)
+    return {
+        "type": "line",
+        "title": "回撤曲线",
+        "labels": [str(r.get("session") or "") for r in rows],
+        "series": [{"name": "回撤", "color": "#b42318", "fill": True, "values": dds}],
+        "y_format": "pct",
+        "y_max": 0.0,
+    }
+
+
+def build_yearly_chart(yearly: list[dict[str, Any]] | None) -> dict[str, Any] | None:
+    rows = list(yearly or [])
+    if not rows:
+        return None
+    labels = [str(r.get("year") or "") for r in rows]
+    ann = [_safe_float(r.get("ann_return")) or 0.0 for r in rows]
+    xs = [_safe_float(r.get("ann_excess")) for r in rows]
+    series: list[dict[str, Any]] = [
+        {"name": "年化收益", "color": "#0b5cab", "values": ann},
+    ]
+    if any(v is not None for v in xs):
+        series.append(
+            {
+                "name": "年化超额",
+                "color": "#1b7f4a",
+                "neg_color": "#b42318",
+                "values": [v if v is not None else 0.0 for v in xs],
+            }
+        )
+    return {
+        "type": "bar",
+        "title": "分年年化 / 超额",
+        "labels": labels,
+        "series": series,
+        "y_format": "pct",
+    }
+
+
+def _chart_script_json(payload: dict[str, Any] | None) -> str:
+    if not payload:
+        return "null"
+    return json.dumps(payload, ensure_ascii=False, default=str).replace("</", "<\\/")
+
+
 def _gate_reason_zh(reason: str) -> str:
     mapping = {
         "oos_folds<2": "样本外折数不足 2",
@@ -462,6 +607,9 @@ def _jinja_env() -> Environment:
     def reject_zh(reason: str) -> str:
         return {
             "max_new_entries_or_max_names": "触及单日开仓/持股上限",
+            "industry_held_cap": "触及同行业持仓只数上限",
+            "industry_daily_cap": "触及同行业当日新开上限",
+            "missing_industry": "缺少行业字段",
             "max_weight": "触及单标的权重上限",
             "limit_up": "涨停不可买",
             "limit_down": "跌停不可卖",
@@ -471,6 +619,7 @@ def _jinja_env() -> Environment:
             "t1": "T+1 限制",
             "entry_filter": "开盘过滤未通过",
             "expired": "订单过期",
+            "already_held": "已持有",
         }.get(reason, reason)
 
     def artifact_zh(key: str) -> str:
@@ -533,15 +682,23 @@ def enrich_conclusion(
     if eq_summary:
         out["equity_summary"] = eq_summary
     metrics = out.get("metrics") or {}
-    bench_nav = metrics.get("benchmark_nav_series")
-    if isinstance(bench_nav, list) and bench_nav:
-        out["equity_svg"] = equity_to_svg(equity, bench_navs=[float(x) for x in bench_nav])
-    else:
-        out["equity_svg"] = equity_to_svg(equity)
-    out["drawdown_svg"] = drawdown_to_svg(equity)
     yearly = metrics.get("yearly") or out.get("yearly") or []
     out["yearly"] = yearly
-    out["yearly_svg"] = yearly_bars_to_svg(yearly)
+    # Rebuild series charts only when equity is provided (preserve pre-enriched payloads).
+    if equity is not None:
+        bench_nav = metrics.get("benchmark_nav_series")
+        bench_list = (
+            [float(x) for x in bench_nav] if isinstance(bench_nav, list) and bench_nav else None
+        )
+        out["equity_svg"] = equity_to_svg(equity, bench_navs=bench_list)
+        out["equity_chart"] = build_equity_chart(equity, bench_navs=bench_list)
+        out["drawdown_svg"] = drawdown_to_svg(equity)
+        out["drawdown_chart"] = build_drawdown_chart(equity)
+        out["yearly_svg"] = yearly_bars_to_svg(yearly)
+        out["yearly_chart"] = build_yearly_chart(yearly)
+    elif yearly and not out.get("yearly_chart"):
+        out["yearly_svg"] = yearly_bars_to_svg(yearly)
+        out["yearly_chart"] = build_yearly_chart(yearly)
 
     out["reject_stats"] = summarize_rejects(rejects)
 
@@ -633,7 +790,16 @@ def load_run_artifacts(run_dir: Path) -> dict[str, Any]:
     }
 
 
-def build_conclusion_from_run(run_dir: Path, base: dict[str, Any] | None = None) -> dict[str, Any]:
+def build_conclusion_from_run(
+    run_dir: Path,
+    base: dict[str, Any] | None = None,
+    *,
+    train_run: str | None = None,
+    validate_run: str | None = None,
+    holdout_run: str | None = None,
+    holdout_stress_run: str | None = None,
+    full_run: str | None = None,
+) -> dict[str, Any]:
     run_dir = Path(run_dir)
     loaded = load_run_artifacts(run_dir)
     cfg = loaded["config"] or {}
@@ -653,19 +819,30 @@ def build_conclusion_from_run(run_dir: Path, base: dict[str, Any] | None = None)
             or 1
         )
         metrics = attach_overfit_metrics(metrics, n_trials=n_trials)
+    if metrics.get("mean_invested") is None and loaded.get("equity") is not None:
+        from qresearch.engines.analysis.invested import mean_invested_from_equity
+
+        inv = mean_invested_from_equity(loaded["equity"])
+        metrics["mean_invested"] = inv.get("mean_invested")
+        metrics["empty_cash_share"] = inv.get("empty_cash_share")
+        metrics["invested_definition"] = inv.get("definition")
+    study_id = (
+        existing.get("study_id")
+        or loaded.get("study_id")
+        or meta.get("study_id")
+        or (cfg.get("hypothesis") or {}).get("study_id")
+    )
     conclusion = {
-        "schema_version": "1.2",
+        "schema_version": "1.5",
         "locale": "zh-CN",
         "title": "量化研究报告",
         "run_id": existing.get("run_id") or meta.get("run_id") or run_dir.name,
-        "study_id": existing.get("study_id")
-        or loaded.get("study_id")
-        or meta.get("study_id")
-        or (cfg.get("hypothesis") or {}).get("study_id"),
+        "study_id": study_id,
         "promotable": existing.get("promotable", meta.get("promotable", False)),
         "gates": existing.get("gates")
         or {"passed": False, "reasons": [], "promotable": False},
         "gates_cfg": existing.get("gates_cfg") or cfg.get("gates") or {},
+        "evaluation": existing.get("evaluation") or cfg.get("evaluation") or {},
         "n_events": existing.get("n_events") or meta.get("n_events") or 0,
         "metrics": metrics,
         "signals": existing.get("signals") or cfg.get("signals") or {},
@@ -686,7 +863,32 @@ def build_conclusion_from_run(run_dir: Path, base: dict[str, Any] | None = None)
         "decisions": loaded.get("decisions") or existing.get("decisions") or [],
         "hypothesis": existing.get("hypothesis") or cfg.get("hypothesis") or {},
     }
+    from qresearch.config import get_settings
+    from qresearch.engines.analysis.split_comparison import build_split_comparison
+
+    settings = get_settings()
+    split = build_split_comparison(
+        runs_dir=settings.runs_dir,
+        studies_dir=settings.studies_dir,
+        study_id=study_id,
+        decisions=conclusion.get("decisions") or [],
+        train_run=train_run,
+        validate_run=validate_run,
+        holdout_run=holdout_run,
+        holdout_stress_run=holdout_stress_run,
+        full_run=full_run,
+    )
+    if split:
+        conclusion["split_comparison"] = split
+        art = run_dir / "artifacts"
+        art.mkdir(parents=True, exist_ok=True)
+        (art / "split_comparison.json").write_text(
+            json.dumps(split, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
+        )
     links = {k: v for k, v in loaded["paths"].items() if v}
+    if split:
+        links["split_comparison"] = str(run_dir / "artifacts" / "split_comparison.json")
     return enrich_conclusion(
         conclusion,
         trades=loaded["trades"],
@@ -725,16 +927,20 @@ def render_html(conclusion: dict[str, Any]) -> str:
         sample_trades=conclusion.get("sample_trades") or [],
         reject_stats=conclusion.get("reject_stats"),
         equity_svg=conclusion.get("equity_svg") or "",
+        equity_chart_json=_chart_script_json(conclusion.get("equity_chart")),
         equity_summary=conclusion.get("equity_summary"),
         drawdown_svg=conclusion.get("drawdown_svg") or "",
+        drawdown_chart_json=_chart_script_json(conclusion.get("drawdown_chart")),
         yearly=conclusion.get("yearly") or (conclusion.get("metrics") or {}).get("yearly") or [],
         yearly_svg=conclusion.get("yearly_svg") or "",
+        yearly_chart_json=_chart_script_json(conclusion.get("yearly_chart")),
         walk_forward=conclusion.get("walk_forward"),
         wf_json=json.dumps(conclusion.get("walk_forward"), ensure_ascii=False, indent=2, default=str),
         pit_audit=conclusion.get("pit_audit"),
         overfit=conclusion.get("overfit") or (conclusion.get("metrics") or {}).get("overfit"),
         decisions=conclusion.get("decisions") or [],
         artifact_links=conclusion.get("artifact_links") or {},
+        split_comparison=conclusion.get("split_comparison"),
     )
 
 
@@ -743,18 +949,38 @@ def write_report(
     conclusion: dict[str, Any],
     *,
     run_dir: Path | None = None,
+    train_run: str | None = None,
+    validate_run: str | None = None,
+    holdout_run: str | None = None,
+    holdout_stress_run: str | None = None,
+    full_run: str | None = None,
 ) -> tuple[Path, Path]:
     report_dir = Path(report_dir)
     report_dir.mkdir(parents=True, exist_ok=True)
 
     if run_dir is not None:
-        enriched = build_conclusion_from_run(run_dir, base=conclusion)
+        enriched = build_conclusion_from_run(
+            run_dir,
+            base=conclusion,
+            train_run=train_run,
+            validate_run=validate_run,
+            holdout_run=holdout_run,
+            holdout_stress_run=holdout_stress_run,
+            full_run=full_run,
+        )
     else:
         enriched = enrich_conclusion(conclusion)
 
-    # Keep machine JSON leaner: SVGs stay in HTML only.
-    skip_svg = {"equity_svg", "drawdown_svg", "yearly_svg"}
-    json_payload = {k: v for k, v in enriched.items() if k not in skip_svg}
+    # Keep machine JSON leaner: chart payloads / SVGs stay in HTML only.
+    skip_heavy = {
+        "equity_svg",
+        "drawdown_svg",
+        "yearly_svg",
+        "equity_chart",
+        "drawdown_chart",
+        "yearly_chart",
+    }
+    json_payload = {k: v for k, v in enriched.items() if k not in skip_heavy}
     json_path = report_dir / "conclusion.json"
     html_path = report_dir / "conclusion.html"
     json_path.write_text(
@@ -768,8 +994,25 @@ def write_report(
     return html_path, json_path
 
 
-def write_report_from_run(run_dir: Path) -> tuple[Path, Path]:
+def write_report_from_run(
+    run_dir: Path,
+    *,
+    train_run: str | None = None,
+    validate_run: str | None = None,
+    holdout_run: str | None = None,
+    holdout_stress_run: str | None = None,
+    full_run: str | None = None,
+) -> tuple[Path, Path]:
     run_dir = Path(run_dir)
     report_dir = run_dir / "report"
     base = _load_json(report_dir / "conclusion.json")
-    return write_report(report_dir, base or {}, run_dir=run_dir)
+    return write_report(
+        report_dir,
+        base or {},
+        run_dir=run_dir,
+        train_run=train_run,
+        validate_run=validate_run,
+        holdout_run=holdout_run,
+        holdout_stress_run=holdout_stress_run,
+        full_run=full_run,
+    )

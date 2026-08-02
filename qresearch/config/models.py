@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,6 +23,8 @@ class IngestConfig(BaseModel):
     date_formats: list[str] = Field(
         default_factory=lambda: ["%Y/%m/%d", "%Y-%m-%d", "%Y/%m/%d", "%Y%m%d"]
     )
+    # limit20 = 科创(688/689)+创业(300/301)；limit10 = 其余（默认）。按涨跌幅制度分流研究。
+    board: Literal["limit10", "limit20", "all"] = "limit10"
 
 
 class FilterRule(BaseModel):
@@ -107,6 +109,10 @@ class PortfolioConfig(BaseModel):
     max_names: int | None = None
     max_new_entries_per_day: int = 10
     lot_size: int = 100
+    # Industry diversification at pretrade (null = off)
+    industry_field: str = "features.industry"
+    max_names_per_industry: int | None = None
+    max_new_per_industry_per_day: int | None = None
 
 
 class EntryFilterConfig(BaseModel):
@@ -174,10 +180,30 @@ class GatesConfig(BaseModel):
     max_oos_drawdown: float | None = 0.35
     # None = disclose only; set e.g. 0.0 to require deflated_sharpe >= threshold
     min_deflated_sharpe: float | None = None
+    # absolute (default) vs excess: which thresholds drive economic_passed
+    primary_metric: Literal["absolute", "excess"] = "absolute"
+    min_ann_excess: float | None = None
+    min_information_ratio: float | None = None
     max_n_trials: int | None = None
     n_trials_assumed: int = 1
     pit_strict: bool = False
     require_economic_for_promote: bool = True
+
+
+class HoldoutWindow(BaseModel):
+    years: list[str] = Field(default_factory=list)
+    role: Literal["final", "stress"] = "final"
+    label: str | None = None
+
+
+class EvaluationConfig(BaseModel):
+    """Sample-split protocol (declaration). Engine does not auto-slice CSVs."""
+
+    primary_metric: Literal["absolute", "excess"] = "absolute"
+    train_years: list[str] = Field(default_factory=list)
+    validate_years: list[str] = Field(default_factory=list)
+    holdouts: list[HoldoutWindow] = Field(default_factory=list)
+    statement_hint: str | None = None
 
 
 class ResearchConfig(BaseModel):
@@ -191,12 +217,27 @@ class ResearchConfig(BaseModel):
     benchmark: BenchmarkConfig = Field(default_factory=BenchmarkConfig)
     walk_forward: WalkForwardConfig = Field(default_factory=WalkForwardConfig)
     gates: GatesConfig = Field(default_factory=GatesConfig)
+    evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
     factors: FactorsConfig = Field(default_factory=FactorsConfig)
     hypothesis: HypothesisConfig = Field(default_factory=HypothesisConfig)
     lookback_sessions: int = 5
     delay_buffer_sessions: int = 10
     suspend_buffer_sessions: int = 5
     ic_horizons: list[int] = Field(default_factory=lambda: [1, 5, 10, 20])
+
+    @model_validator(mode="after")
+    def _sync_primary_metric(self) -> ResearchConfig:
+        # When evaluation declares primary or sample windows, it wins over gates.
+        ev = self.evaluation
+        if (
+            ev.primary_metric != "absolute"
+            or ev.train_years
+            or ev.validate_years
+            or ev.holdouts
+            or ev.statement_hint
+        ):
+            self.gates.primary_metric = ev.primary_metric
+        return self
 
 
 class AppSettings(BaseSettings):

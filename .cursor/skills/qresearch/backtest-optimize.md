@@ -1,101 +1,217 @@
 # 回测与参数优化（Backtest & optimization）
 
-入口：[SKILL.md](SKILL.md)。在信号定制之后执行；与 [strategy-design.md](strategy-design.md) 的执行/风控层衔接。
+入口：[SKILL.md](SKILL.md)。在信号定制之后执行；与 [strategy-design.md](strategy-design.md) 的执行/风控层衔接。  
+定稿与选格否决见 [quality-gates.md](quality-gates.md)。**信封 `best_value` ≠ 可定稿。**
 
 ## 目标
 
-评估经济表现与门禁；在**训练集**上做执行/风控敏感度或参数搜索；**holdout 只评估一次**。
+评估经济表现与门禁；在**训练集**上分层搜参；OOS **只评估、不调参**；`apply-best` 只写候选，过质量闸门后方可标 champion。
+
+## 文风
+
+本文件只给 CLI 结构与占位符（`<train_csvs>`、`<grid_from_hypothesis>`）。  
+**禁止**写死可抄的 stop/take/keep-frac 数字串或特征配方。
+
+## 评估协议（搜参前必写）
+
+在 YAML `evaluation:`（或至少 `hypothesis.statement`）写清：
+
+- 样本角色：`train` / `validate`（可选，只冻结不搜参）/ `holdout`（终测 final）/ `holdout_stress`（压力）/ `full`（仅披露）
+- 主指标：绝对 Sharpe 还是超额/IR（`evaluation.primary_metric` / `gates.primary_metric`）
+- 用户附加目标（若有年化等）写入 `statement_hint`；选格时适用质量闸门 G5/G6
+- 停手与晋升口径（多折 OOS、是否看超额等——按课题写，勿抄固定年份）
+
+```yaml
+evaluation:
+  primary_metric: absolute   # or excess
+  train_years: ["<y1>", "<y2>", "..."]   # 从 sample_profile.years 填写
+  validate_years: ["<optional>"]
+  holdouts:
+    - { years: ["<final_year(s)>"], role: final, label: final_oos }
+    - { years: ["<stress_year(s)>"], role: stress, label: stress_oos }
+  statement_hint: "<晋升口径与多目标；年份以产物为准>"
+```
+
+引擎不自动按 years 切 CSV；agent 按协议选 `--csv`。
+
+### 充分利用 events（强制）
+
+- 先 `validate-events`，再按 `sample_profile.years` / `years_span` 规划切分。
+- **禁止**因「不是完整自然年」丢弃可用年。
+- **full** 的 `--csv` 须覆盖本次研究已纳入的全部事件年。
+- 省略某年进 holdout 规划须在 decision 写明理由。
 
 ## 样本切分（强制）
 
 | 角色 | 做法 |
 |------|------|
-| 训练 + 验证 | 多年 CSV，**不含** holdout；WF / optimize / sensitivity 只用这些年 |
-| 测试 holdout | 最后 1 个自然年（或用户指定）；永不进入 optimize/sensitivity 搜参 |
-| 全样本终测 | 参数冻结后，对 **train+holdout 全部年份** 再跑一次 `pipeline research`（披露完整曲线与分年表）；**不能代替** holdout 门禁，也 **禁止** 看完全样本再调参 |
+| train | 调参年；WF / optimize / sweep / sensitivity **只用**这些年 |
+| validate | 可选冻结窗；**不搜参** |
+| holdout (final) | 终测 OOS；永不搜参 |
+| holdout_stress | 压力 OOS；**差≠机械否决** |
+| full | 冻结后全区间；**仅披露**；不可单独 promote |
 
-在 `hypothesis.statement` 与回复中写明：`train=..., holdout=...`。
+铁律：网格边界也不得在看过 OOS 后改。达标须同报 `mean_invested` / `empty_cash_share`。
+
+---
+
+## 参数优化纪律（强制）
+
+搜参前在 `hypothesis.statement` 写清：**本轮只动哪一类旋钮、经济含义、成功/失败标准**。
+
+| 原则 | Agent 动作 |
+|------|------------|
+| 先假设后网格 | 禁止无叙事全参数乱扫 |
+| 分层 / 一次一类 | 信号 →（冻结）→ 执行/组合；**禁止** `sweep × sensitivity` 联乘；未冻结上一层不得搜下一层 |
+| 只在 train 搜 | validate / holdout / stress 只评估 |
+| 控制试次 | `n_trials_assumed` ≥ 本轮独立格点数；披露 deflated Sharpe；试次过大先降维 |
+| 时序 WF | 正式搜参 train 跨 ≥2 自然年；单年网格不得标正式 |
+| 稳健优于尖峰 | 看邻域稳定、成本加压；**`best_value` 只是候选** |
+| 经济可交易 | apply-best 后过 [quality-gates.md](quality-gates.md) 才可冻结 |
+| 复杂度预算 | 自由参数过多 → 先固定一类为模板 |
+| 先粗后细 | 同类旋钮可两轮加密，不得顺带开新参数类；累计计入 trials |
+| 成本摩擦 | sensitivity **必须**含 cost 乘数维（G7） |
+| 目标一致 | 多目标时选格表并列主指标与附加目标 + invested（G6） |
+| 可审计 | `study decision` 写网格维度、N、入选理由、**否决的更高夏普格** |
+
+### 命令映射
+
+| 参数类 | 命令 |
+|--------|------|
+| 单特征分位门槛 | `qr pipeline optimize` |
+| 多过滤 / 区间带 | `qr pipeline sweep` |
+| stop / take / hold / 仓位配额等 | `qr pipeline sensitivity` |
+| 写回 | `apply-best` → research → 闸门验收 |
+
+不要求、也不假装：CPCV 等引擎未提供的方法。反模式见 [research-loop.md](research-loop.md)。
+
+---
 
 ## A. 回测 research
 
 ```bash
-qr pipeline research --csv <train_years...> --config configs/experiments/<file>.yaml \
+qr pipeline research --csv <train_csvs...> --config configs/experiments/<file>.yaml \
   --n-trials-assumed <N> --format json --quiet
 
+qr analyze trades --run <run_id> --format json --quiet
 qr analyze report --run <run_id> --format json --quiet
 ```
 
-记下：`run_id`、报告路径、`summary.metrics`、`summary.gates`、`pit_status`、`trade_stats`。
+记下：`run_id`、metrics、gates、`pit_status`、**退出结构与 invested**。  
+候选 YAML 的 train research 之后、宣布冻结之前：必跑 `analyze trades` 并过 [quality-gates.md](quality-gates.md)。
 
-### 门禁语义
+### 门禁语义（引擎）
 
 | 字段 | 含义 |
 |------|------|
-| `structural_passed` / `passed` | 笔数、OOS folds 等 → 研究可继续 |
-| `economic_passed` | Sharpe / 回撤等 |
+| `structural_passed` / `passed` | 笔数、OOS folds 等 |
+| `economic_passed` | 按 `gates.primary_metric` |
+| `absolute_ok` / `excess_ok` | 双轨披露 |
 | `promotable` | 结构 ∧ 经济（默认）→ 才可考虑 promote |
 
-**勿**把结构过关当成可实盘。
+引擎 `promotable=true` 仍须通过 skill 质量闸门才可称完整策略。全样本 run 永不单独 promote。
 
 ### 分析清单
 
 - [ ] `config.snapshot.yaml` 是否为本轮 YAML  
-- [ ] sharpe / max_dd / total_return / n_trades  
-- [ ] IR / 换手 / 容量（缺数据勿编造）  
+- [ ] sharpe / ann_return / max_dd / n_trades  
+- [ ] `mean_invested` / `empty_cash_share`  
+- [ ] 相对基准（excess / IR）  
 - [ ] deflated_sharpe、`n_trials`  
-- [ ] PIT：`warn` 常见；`fail` 先修数据  
-- [ ] 退出原因占比（大量 `exit_intent` vs stop/tp）  
-- [ ] 拒单原因（配额 / 涨跌停 / filter）
+- [ ] PIT  
+- [ ] **质量闸门**（G0b–G6 适用项）  
+- [ ] 拒单 Top  
 
-## B. 执行/风控敏感度（信号冻结后必做，才算完整策略）
+---
 
-因子 IC **不能**直接给出 stop/take/validity。信号冻结后：
+## B. 执行/风控敏感度
+
+顺序：§A 基线 + 闸门 →（默认）§C 信号搜参 → 候选验收 → §B。  
+因子 IC **不能**直接给出 stop/take/validity。
 
 ```bash
-qr pipeline sensitivity --csv <train_years...> --config <signal_frozen.yaml> \
-  --cost-mult 1,1.5,2 \
-  --stop -0.05,-0.086,-0.12 \
-  --take 0.10,0.158,0.20 \
-  --max-grid 27 \
+qr pipeline sensitivity --csv <train_csvs...> --config <signal_frozen.yaml> \
+  --cost-mult <cost_grid> \
+  --stop <stop_grid> \
+  --take <take_grid> \
+  --max-hold <hold_grid> \
+  --max-weight <weight_grid> \
+  --max-new <new_grid> \
+  --sizing-base <bases> \
+  --max-grid <N> \
   --format json --quiet
 ```
 
-- 可按需加 validity / lag 的对比（改 YAML 多跑几个 research，或扩网格）
-- `n_trials_assumed` 计入网格点数
-- 选稳健格（如成本×2 后仍可接受）→ **新 YAML** → 再 `pipeline research`（训练年）
-- **敏感度 run 本身不 promote**
+格点数值来自本轮假设与上一轮诊断（**勿从 skill 抄数字**）。必须含 cost 维。
 
-未跑本节就交付「完整策略」→ 违规；须声明执行层仍为模板。
+### 选格（多准则）
 
-## C. 参数优化（Optuna：默认应做，非可偷懒跳过）
+1. 从网格取候选（非唯一看夏普；可点名次优稳健格）。  
+2. `apply-best` 写出候选 YAML（尚未定稿）。  
+3. train research + `analyze trades`。  
+4. 过 [quality-gates.md](quality-gates.md) G1–G7（含 G7 cost）。  
+5. 通过 → decision 冻结；失败 → 废弃该候选，换格或回退。  
 
-与 §B 分工：**sensitivity = 执行/风控网格（必做）**；**optimize = 信号侧连续/阈值参数搜索（默认应做）**。
+**敏感度 run 本身不 promote。** 未跑 §B 须声明 `execution_template`。
 
-默认研究闭环到交付完整策略时，训练年应至少跑一轮 `pipeline optimize`（或等价的手动网格），再冻结。  
-**仅下列情形可跳过**，且须在 study decision 写明理由：
+---
 
-- 用户明确说本次不做 Optuna / 只做结构对比  
-- 信号已无待搜旋钮（阈值、权重、持有期等均已由因子结论或 sensitivity 定死）  
-- 上一轮 optimize 刚冻结且本轮只改结构、不重搜同一空间  
+## C. 信号阈值（optimize / sweep）
 
-禁止把「可选」理解成「能省则省」。未做 optimize 时，结论须标注「信号参数未搜索，仅结构/模板阈值」。
+**optimize/sweep = 信号侧**；**sensitivity = 执行/组合侧**。  
+默认在 §B 之前。未冻结信号层证据不得开始 §B（除非用户只要执行模板实验并声明）。
 
-仅在信号骨架已由因子选定、且通常在 §B 定稿执行层之后（或与之交错但一次只动一类旋钮）：
+### C1. `pipeline optimize`
 
 ```bash
-qr pipeline optimize --csv <train_years...> --config <exp.yaml> \
-  --n-trials 20 --feature features.<best> --format json --quiet
+qr pipeline optimize --csv <train_csvs...> --config <exp.yaml> \
+  --feature features.<from_evidence> --side auto|high|low \
+  --keep-frac <frac_grid_from_hypothesis> --format json --quiet
 ```
 
-规则：
+方向来自 `expected_sign` / 因子证据。写回后验收时查密度 G1 等。
 
-1. 仅训练年；≥2 个自然年才算正式（引擎 WF）；单年 = 仅探索。  
-2. `best_params` 写回**新** YAML 并冻结。  
-3. 训练年 `pipeline research --n-trials-assumed N`。  
-4. holdout **单独** research/validate **一次**；差则否决，禁止用 holdout 重搜。  
-5. 一次只动一类旋钮（signals **或** risk **或** portfolio），便于归因。
+### C2. `pipeline sweep`
 
-## D. 对比与迭代
+```bash
+qr pipeline sweep --csv <train_csvs...> --config <exp.yaml> \
+  --set "signals.filters[field=features.<from_evidence>].value=<v_grid>" \
+  --set "signals.filters[field=features.<from_evidence>].between=<lo:hi>,..." \
+  --metric <primary_or_declared> --max-grid <N> --format json --quiet
+```
+
+行含 `n_events_kept`（窄带过拟合信号）。区间因子勿用 `optimize --keep-frac`。
+
+### 写回（候选 → 验收）
+
+```bash
+qr config apply-best --from-run <opt_or_sweep_id> \
+  --out configs/experiments/<name>_vN.yaml --format json --quiet
+# 然后 train research + analyze trades + quality-gates；失败则不得冻结
+```
+
+可跳过信号搜参（须 decision）：用户明确不做；阈值已由证据定死；本轮只改执行层。
+
+规则：仅 train；≥2 自然年才正式；一次一类旋钮；`n_trials_assumed` ≥ N。
+
+---
+
+## D. Validate / Holdout / Stress（冻结后只评估）
+
+仅 **质量闸门通过后的冻结 YAML** 进入本段。
+
+```bash
+qr pipeline research --csv <validate_or_oos_csvs...> --config <frozen.yaml> \
+  --n-trials-assumed <N> --format json --quiet
+qr study decision --study <id> --stage <backtest_validate|holdout|holdout_stress> \
+  --summary "..." --rationale "..." --run <run_id> --config <frozen.yaml> \
+  --format json --quiet
+```
+
+Holdout decision：绝对/相对是否达标、`mean_invested`、角色 final vs stress。  
+stress 差 → 归因，不改参；新假设开新 study。
+
+## E. 对比与迭代
 
 ```bash
 qr runs compare --runs <id1>,<id2> --format json --quiet
@@ -103,60 +219,44 @@ qr runs compare --runs <id1>,<id2> --format json --quiet
 
 | 观察 | 动作 |
 |------|------|
-| 信号与 IC 方向矛盾 | 回 [factor-analysis.md](factor-analysis.md) / 改 signals |
-| 结构过、经济不过 | 降换手或跑 sensitivity；禁止 promote |
-| 成交过少 / 配额拒单 | 放宽 filter 或提高日限入 |
-| 模板 stop/tp 主导盈亏 | **必须**跑 sensitivity，不得只改信号声称完成 |
-| 连续 2–3 轮无改进 | 停止，对比 runs，给出推荐/否决 |
+| 信号与 IC 矛盾 | 回因子 / 改 signals |
+| 闸门 G1 密度失败 | 放宽硬过滤或改 rank；或标 sparse 旁路 |
+| 闸门 G2/G3 退出畸形 | 重跑 sensitivity，否决纸面 TP |
+| 结构过、经济不过 | 降换手或改执行；禁止 promote |
+| 连续 2–3 轮无改进 | 停止并对比 |
 
 默认最多 **3** 轮「改策略/优化→回测」；更多需用户同意。
 
-## E. 全样本终测（冻结后必做）
-
-holdout 评估完成后（无论通过与否，只要还要交付最终报告）：
+## F. 全样本终测（冻结后必做，仅披露）
 
 ```bash
-# 全部年份 CSV（训练 + holdout），配置已冻结
-qr pipeline research --csv <all_years...> --config <frozen.yaml> \
+qr pipeline research --csv <all_year_csvs...> --config <frozen.yaml> \
   --n-trials-assumed <N> --format json --quiet
 qr study decision --study <study_id> --stage full_sample \
-  --summary "全样本 run=<id>; sharpe=..; 分年见报告" \
-  --rationale "参数已冻结；本 run 仅披露完整区间，不参与调参" \
+  --summary "全样本仅披露; ..." --rationale "参数已冻结" \
   --run <run_id> --config <frozen.yaml> --format json --quiet
+qr analyze report --run <full_run_id> --format json --quiet
 ```
 
-向用户同时给出：训练年 / holdout / **全样本** 三个 `run_id`（若都跑过）。晋升仍以训练 WF + holdout 为准。
-
-## F. 晋升（可选，用户明确要求）
+## G. 晋升（可选，用户明确要求）
 
 ```bash
-qr validate rolling --csv <train_years...> --config <final.yaml> --format json --quiet
+qr validate rolling --csv <train_csvs...> --config <final.yaml> --format json --quiet
 qr promote --run <run_id> --model-id <id> --version <ver> --format json --quiet
 ```
 
-仅 `promotable=true` 且用户要求时；`--force` 需用户明确。  
-**不要**用全样本 run 的好看指标去 promote 而跳过 holdout。
+仅引擎 `promotable=true` **且** skill 质量闸门通过 **且** 用户要求；`--force` 需用户明确。
 
 ## 试次（deflated Sharpe）
 
-- 第 1 轮 research：`n_trials_assumed=1`（或配置值）
-- 每多一轮改 YAML 再 research：+1
-- optimize `N` 试次 / sensitivity 网格：后续 research 用 ≥N
-
-## Anti-patterns
-
-- 未做因子就宣称因子驱动策略  
-- 只改 signals、执行层抄模板却称「完整策略」  
-- holdout 参与 optimize / 看完 holdout 再调参  
-- 口头改参不写 YAML  
-- 为冲指标改 costs  
-- 单年全样本 optimize 当可晋升证据  
+- 第 1 轮 research：`n_trials_assumed=1`（或配置值）  
+- 每多一轮改 YAML 再 research：+1  
+- 网格搜参后：后续 research 用 ≥ 该网格独立点数（累计多轮则取和或上界并写 decision）
 
 ## 本阶段交付
 
-- `run_id`（训练 / holdout / 全样本）、配置路径、报告路径  
-- 关键指标 + 分年年化/超额（报告内表格）  
-- 门禁：`structural` / `economic` / `promotable`  
-- 执行层是否已经 sensitivity 定稿  
-- 各阶段 `qr study decision` 已写入  
+- `evaluation` 协议 + 各窗 `run_id`  
+- 关键指标 + invested + 退出结构摘要 + 闸门结果  
+- 执行层：定稿 / `execution_template` / 旁路标签  
+- 搜参 decision（N、入选、否决的更高夏普格）  
 - 下一动作或停手理由  

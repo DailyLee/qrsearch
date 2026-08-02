@@ -36,6 +36,8 @@ qr pipeline research --csv workspace/events/平台期扫描_批量_2019_合并_0
 
 Agent-friendly I/O: always use `--format json --quiet`. stdout is a single JSON envelope (`schema_version`, `summary`, `artifacts`, `next_actions`, `error`). Logs go to stderr.
 
+Global `--board limit10|limit20|all` overrides YAML `ingest.board` (default `limit10`: exclude 科创 688/689 + 创业 300/301). Study 20% boards separately with `--board limit20`.
+
 Exit codes: `0` ok, `2` config, `3` data, `4` gate blocked, `5` dependency missing.
 
 ## Domain terms
@@ -74,14 +76,14 @@ Synthetic fixtures cover GFD/GTD, T+1, sizing, pre-trade state sensitivity, and 
 
 ## Agent workflow
 
-This repo exposes **CLI tools only**. The research loop (factor analysis → write strategy YAML → backtest → read report → optimize / adjust → stop) is defined for agents in [`.cursor/skills/qresearch/SKILL.md`](.cursor/skills/qresearch/SKILL.md). Experiment configs go under `configs/experiments/`.
+This repo exposes **CLI tools only**. The research loop (factor analysis → write strategy YAML → backtest → quality gates → optimize / adjust → stop) is defined for agents in [`.cursor/skills/qresearch/SKILL.md`](.cursor/skills/qresearch/SKILL.md)（硬否决见同目录 `quality-gates.md`；开局脚手架 `qr config new`）。Experiment configs go under `configs/experiments/`.
 
-Engineering principles for maintainable agent/code iteration: **[agent.md](agent.md)** (also linked from `AGENTS.md`).  
+Engineering principles: **[agent.md](agent.md)** — any change must keep **config · tests · skill · md** aligned (see §1). Also linked from `AGENTS.md`.  
 Product / research capability roadmap: **[ROADMAP.md](ROADMAP.md)**.
 
 ## Reports
 
-`pipeline research` and `qr analyze report --run <run_id>` write a Chinese HTML report:
+`pipeline research` and `qr analyze report --run <run_id>` write a Chinese HTML report（净值/回撤/分年图可悬停读数，坐标含多档刻度；离线自包含，无 CDN）:
 
 - `workspace/runs/<run_id>/report/research_report_zh.html` (alias of `conclusion.html`)
 - `workspace/runs/<run_id>/report/conclusion.json` (metrics, IC, strategy, trade stats)
@@ -96,9 +98,11 @@ Research quality knobs in YAML `gates`: `n_trials_assumed`, `min_deflated_sharpe
 
 ```
 qr data ping | validate-events | clear-cache
-qr pipeline research|optimize|sensitivity
+qr config new --out configs/experiments/<name>.yaml --study-id ...   # scaffold from examples
+qr config apply-best --from-run ... --out configs/experiments/<name>_vN.yaml
+qr pipeline research|optimize|sweep|sensitivity
 qr validate rolling
-qr factor ic|compare
+qr factor ic|compare|band-ic
 qr backtest run
 qr analyze report --run ...
 qr promote --run ... --model-id ... --version ...

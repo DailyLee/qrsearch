@@ -17,9 +17,27 @@ def _as_date(v: object) -> date:
 
 def build_sample_profile(events: pl.DataFrame, feature_cols: list[str] | None = None) -> dict[str, Any]:
     if events.height == 0:
-        return {"n_events": 0, "n_instruments": 0, "years": {}, "feature_non_null": {}}
+        return {
+            "n_events": 0,
+            "n_instruments": 0,
+            "years": {},
+            "years_span": {},
+            "feature_non_null": {},
+        }
 
-    years = Counter(_as_date(d).year for d in events["entry_intent_date"].to_list())
+    entry_dates = [_as_date(d) for d in events["entry_intent_date"].to_list()]
+    years = Counter(d.year for d in entry_dates)
+    span: dict[str, dict[str, str | int]] = {}
+    by_year: dict[int, list[date]] = {}
+    for d in entry_dates:
+        by_year.setdefault(d.year, []).append(d)
+    for y, ds in sorted(by_year.items()):
+        span[str(y)] = {
+            "n": len(ds),
+            "entry_min": str(min(ds)),
+            "entry_max": str(max(ds)),
+        }
+
     n_inst = int(events["instrument"].n_unique())
     dup = events.height - events.unique(subset=["instrument", "entry_intent_date"]).height
 
@@ -38,6 +56,7 @@ def build_sample_profile(events: pl.DataFrame, feature_cols: list[str] | None = 
         "entry_max": str(events["entry_intent_date"].max()),
         "duplicate_keys": int(dup),
         "years": {str(k): int(v) for k, v in sorted(years.items())},
+        "years_span": span,
         "feature_non_null": non_null,
         "n_feature_cols_profiled": len(non_null),
     }

@@ -2,133 +2,129 @@
 name: qresearch
 description: >-
   编排 qresearch（CLI: qr）做事件驱动研究闭环：因子分析→自定策略 YAML→回测→
-  读中文报告→参数优化/改策略→再评估；以及 validate、promote、ops。项目只提供
-  CLI，策略判断与迭代由本 skill 执行。在 qrsearch 仓库内研究、调参、对比 run，
+  质量闸门→参数优化/改策略→再评估；以及 validate、promote、ops。项目只提供
+  CLI，策略判断与闸门由本 skill 执行。在 qrsearch 仓库内研究、调参、对比 run，
   或用户提到 qr / 因子分析 / 定策略 / 回测优化时使用。不依赖 vnpy。
 ---
 
 # qresearch
 
-**分工**：仓库 = 确定性 CLI；**本 skill = 分析与执行剧本**（读 IC、改配置、迭代、向用户结论）。
+**分工**：仓库 = 确定性 CLI；**本 skill = 分析与执行剧本**（读证据、过质量闸门、改配置、迭代、向用户结论）。
 
 包名 `qresearch`，入口 `qr`（或 `python -m qresearch`）。
 
-## 文档地图（按大类）
+## 文风（全 skill 包）
+
+- **允许**：CLI 旗标、配置键、占位符 `<train_csvs>`、`features.<from_evidence>`、相对阈值符号（见 [quality-gates.md](quality-gates.md)）。
+- **禁止**：可粘贴的特征组合、止损止盈具体小数、keep-frac 数字串、行业 N/K「推荐值」、写死研究起止年。
+- **信封 `best_value` / 引擎 `promotable` ≠ 可定稿**；定稿须过质量闸门。
+
+## 文档地图
 
 | 阶段 | 文档 | 负责什么 |
 |------|------|----------|
-| 1. 因子分析 | [factor-analysis.md](factor-analysis.md) | 候选池+冗余；多因子 filter/rank/composite（非仅 Top2） |
-| 2. 策略定制 | [strategy-design.md](strategy-design.md) | YAML 落盘；落实候选池；信号层 vs 执行/风控层 |
-| 3. 回测与优化 | [backtest-optimize.md](backtest-optimize.md) | research、sensitivity、optimize、holdout、门禁 |
-| 编排索引 | [research-loop.md](research-loop.md) | 分支、停手、反模式速查 |
+| 1. 因子分析 | [factor-analysis.md](factor-analysis.md) | raw+中性对照；形状分流；band-ic；候选池+冗余+密度预估 |
+| 2. 策略定制 | [strategy-design.md](strategy-design.md) | `qr config new`；信号层；exit 语义；执行层占位 |
+| 3. 回测与优化 | [backtest-optimize.md](backtest-optimize.md) | 协议；**优化纪律**；research；搜参；sensitivity；OOS |
+| 4. 质量闸门 | [quality-gates.md](quality-gates.md) | 硬否决：密度 / 退出结构 / 仓位 / 多目标；候选验收后才冻结 |
+| 编排索引 | [research-loop.md](research-loop.md) | 分支、停手、反模式 |
 | CLI 全表 | [reference.md](reference.md) | 命令与路径 |
+| 工程改动 | [../../../agent.md](../../../agent.md) | 四位一体：配置·用例·skill·md |
 
-用户只点某一阶段时，**只读对应文档**，不必整本闭环。
+用户只点某一阶段时，**只读对应文档**；涉及定稿/选格时**必读 quality-gates**。
 
 ## 硬性规则
 
-1. Agent I/O：命令一律 `--format json --quiet`；只解析 stdout JSON 信封；日志在 stderr。
-2. 勿编造行情；缺数据就停并提示同步 zer0share。
-2b. **事件 CSV 只读**：禁止改/删/覆盖 `workspace/events/**`、`workspace/events_ascii/**`（含 Shell 重定向）。ingest 只用 `--csv`；预处理/衍生只写 `workspace/runs/<run_id>/artifacts/`。需要新样本时请用户提供，勿就地改原始文件。
-3. 勿引入 vnpy / `vnpy_portfoliostragtegy`；行情仅 `ZER0SHARE_ROOT` / `ZER0SHARE_DATA`。
-4. 领域术语：`entry_intent_date` / `exit_intent_date` / `portfolio.max_weight` 等；CSV 的 `buy_date`/`code` 只是 ingest alias。
-5. 无隐式 +1；延迟只用 `execution.lag_sessions`。
-6. 大表落盘；对话里只引用路径与摘要。
-7. **策略必须落盘为 YAML** 再回测；禁止只在口头改参数却仍跑旧 config。
-8. 每轮迭代复制新配置；勿覆盖唯一的 `configs/examples/*` 而不留副本。
-8b. **勿通读 `configs/experiments/` 历史文件当起点**。该目录是落盘区（已 gitignore / cursorignore），不是知识库。仅当用户 `@` 指定、study decision / RUNS 指向某路径、或本会话刚写入时才读取；新假设从 `configs/examples/` 复制后写**新文件名**。
-9. **参数优化必须分样本**：调参只用训练/验证；**禁止**在 holdout 上调参。
-10. **完整策略 = 信号证据 + 执行/风控证据**。因子 IC 只支撑 signals；`risk.*` / `order_validity_sessions` 须经 sensitivity（或等价网格）定稿。未做则必须声明「执行层仍为模板默认」。
-11. **决策必须落盘并与产物关联**：`hypothesis.study_id` 写入实验 YAML；每阶段 `qr study decision --study <id>`；有 run 时**必须**加 `--run <run_id>`（镜像进该 run，并写入 `meta.study_id`）。报告会拉取整个 study 决策链。
-12. **调参分样本，终测用全样本**：optimize / sensitivity / 迭代只在训练年；holdout 只评估一次；**冻结参数后必须再对 train+holdout 全区间跑一次 research**（披露用，禁止据此再调参）。
+工程与契约（仓库侧）：
 
-退出码：`0` ok，`2` 配置，`3` 数据，`4` 门禁 blocked，`5` 依赖缺失。
+1. Agent I/O：`--format json --quiet`；只解析 stdout JSON；日志在 stderr。  
+2. 勿编造行情；缺数据停并提示同步 zer0share。勿引入 vnpy。  
+3. **事件 CSV 只读**（`workspace/events/**`、`events_ascii/**`）；衍生只写 `workspace/runs/`。  
+4. 术语：`entry_intent_date` / `exit_intent_date` 等；CSV `buy_date`/`code` 仅 ingest alias。无隐式 +1，延迟只用 `execution.lag_sessions`。  
+5. 策略落盘 YAML：开局 **`qr config new`**；新假设新文件；勿改 `configs/examples/*`；勿通读 `experiments/` 当起点。大表落盘，对话只引路径摘要。
+
+研究纪律（细则见专章；**反模式**见 [research-loop.md](research-loop.md)）：
+
+6. 板块分流（G8）；参考退出日不得留 `exit_intent`（G0/G0b）。  
+7. 因子中性对照必做一次；信号默认原始特征。先写 `evaluation` 再搜参。  
+8. 只在 train 搜参；一次一类旋钮；禁 `sweep×sensitivity`；`n_trials_assumed` ≥ 格点数（见 backtest-optimize）。  
+9. **完整策略 = 信号证据 + 执行证据 + [quality-gates](quality-gates.md)**。`apply-best` 只写候选；未做 sensitivity → `execution_template`。  
+10. 决策落盘：`study_id` + 每阶段 `qr study decision`（搜参记否决的更高夏普格）。多窗 OOS；全样本仅披露；stress 差≠机械否决。充分利用 events。达标同报 `mean_invested`。
+
+退出码：`0` ok，`2` 配置，`3` 数据，`4` 门禁 blocked（`promote`），`5` 依赖缺失。  
+`pipeline research` 即使 `promotable=false` 也常为 exit `0`——以信封 `status` / `gates` 为准。
 
 ## 决策存档（每阶段必做）
 
-选定同一 `study_id`（如 `plat_box_2019_2025`），并写入 YAML：
-
 ```yaml
 hypothesis:
-  study_id: plat_box_2019_2025
+  study_id: <topic>_<tag>
 ```
-
-阶段结束后：
 
 ```bash
 qr study decision --study <study_id> --stage <stage> \
-  --summary "<一句话结果>" --rationale "<决策逻辑>" \
+  --summary "<一句话>" --rationale "<逻辑>" \
   [--evidence path_or_json] --run <run_id> [--config <yaml>] \
   [--next-action "..."] --format json --quiet
-# 然后刷新报告以带上决策链：
 qr analyze report --run <run_id> --format json --quiet
 ```
 
-| 位置 | 作用 |
-|------|------|
-| `workspace/studies/<id>/decisions/` | 全流程 canonical 决策链 |
-| `workspace/studies/<id>/RUNS.md` | 关联过的 run / 报告路径 |
-| `workspace/runs/<run_id>/decisions/` | 该次产物上的镜像 |
-| `meta.json` 的 `study_id` | 报告加载决策链的钥匙 |
-| 报告章节「0. 决策存档」 | 最终 HTML/JSON 内可见 |
-
 | stage | 何时写 |
 |-------|--------|
-| `factor_analysis` | 因子结论与主因子选定后 |
-| `strategy_design` | 实验 YAML 落盘后 |
-| `backtest_train` | 训练年 research 后 |
-| `sensitivity` / `optimize` | 网格或 Optuna 定稿后 |
-| `holdout` | holdout 一次评估后 |
-| `full_sample` | 全样本终测 research 后 |
+| `factor_analysis` | 因子结论后 |
+| `strategy_design` | 实验 YAML 落盘后（含 exit 语义） |
+| `backtest_train` | 训练年 research + 闸门结果后 |
+| `optimize` / `sweep` / `sensitivity` | 搜参后（含否决格） |
+| `backtest_validate` / `holdout` / `holdout_stress` / `full_sample` | 各窗评估后 |
 
-## 默认研究闭环（用户未指定流程时）
+## 默认研究闭环
 
 ```
 Task Progress:
-- [ ] 0. 环境：ping + validate-events
-- [ ] 1. 因子分析 → factor-analysis.md → study decision
-- [ ] 2. 策略定制（信号层）→ strategy-design.md → study decision
-- [ ] 3. 回测 research（训练年）→ backtest-optimize.md §A → study decision
-- [ ] 4. 信号冻结后：sensitivity 定稿执行/风控 → §B；写回新 YAML
-- [ ] 5. 再 research；默认 optimize 一轮（仅训练年；跳过须写理由）→ §C
-- [ ] 6. holdout 一次评估 → study decision
-- [ ] 7. 冻结参数 → 全样本（train+holdout）research 终测 → study decision (full_sample)
+- [ ] 0. 环境：ping + 列出全部事件年 → validate-events → 澄清 exit 日语义 → evaluation 切分
+- [ ] 1. 因子分析（raw+preprocess；shape；区间则 band-ic；密度预估）→ decision
+- [ ] 2. qr config new → 写信号（密度自觉）→ strategy_design decision
+- [ ] 3. 训练年 research → analyze trades → quality-gates（失败则回 2 或改 risk）
+- [ ] 4. （默认）optimize|sweep → apply-best（候选）→ research → analyze trades → 闸门（失败换格/回退）
+- [ ] 5. sensitivity（含 cost 维）→ apply-best（候选）→ research → 闸门 → 冻结
+- [ ] 6. validate? → holdout final → holdout_stress? → decisions
+- [ ] 7. 全样本 research（仅披露）→ full_sample decision → 向用户总结
 ```
+
+顺序意图：**协议 → 信号 → 诊断/闸门 → 分层搜参 → 闸门 → 冻结 → OOS**。
 
 ```bash
-# 0) 环境
 qr data ping --format json --quiet
-qr data validate-events --csv <events.csv> --config <base.yaml> --format json --quiet
+qr data validate-events --csv <all_event_csvs...> --config <base_or_exp.yaml> --format json --quiet
 ```
-
-细节、分支表、停手条件见各专章与 [research-loop.md](research-loop.md)。
 
 ## 快捷路径
 
 | 用户意图 | 路径 |
 |----------|------|
 | 只检查环境/CSV | 步骤 0 |
-| 只要因子分析 | [factor-analysis.md](factor-analysis.md) |
-| 只要定策略 YAML | 因子结论已有 → [strategy-design.md](strategy-design.md) |
-| 只要回测/优化 | 已有 YAML → [backtest-optimize.md](backtest-optimize.md) |
-| 只要示例跑通 | 用 `configs/examples/...` research，并声明「未做因子定策略」 |
+| 只要因子分析 | factor-analysis.md |
+| 只要定策略 YAML | 因子结论已有 → strategy-design.md |
+| 只要回测/优化 | 已有 YAML → backtest-optimize.md + **quality-gates.md** |
+| 只要示例跑通 | examples research，并声明「未做因子定策略 / 未过闸门」 |
 | 只要报告 | `qr analyze report --run ...` |
-| 实盘导出 | 已有 package → `promote` / `ops`（见 reference） |
+| 实盘导出 | promote / ops（须闸门 + 用户要求） |
 
 ## 配置与产物（速查）
 
 | 区域 | 键 |
 |------|-----|
 | signals | `filters`、`rank_by`、`composite` |
-| portfolio | `starting_cash`、`max_weight`、`max_new_entries_per_day` |
+| portfolio | `starting_cash`、`max_weight`、`max_new_entries_per_day`、行业 cap |
 | execution | `price`、`order_validity_sessions`、`entry_filter`、`lag_sessions` |
-| risk | `stop_loss`、`take_profit`、`max_hold_sessions` |
-| gates | `min_oos_folds`、`min_trades`、经济阈值 |
+| risk | `stop_loss`、`take_profit`、`max_hold_sessions`、`exit_priority` |
+| gates / evaluation | 笔数、主指标、切分角色 |
 
 中文报告：`workspace/runs/<run_id>/report/research_report_zh.html`。
 
 ## 回复用户时
 
-- 写明阶段：因子结论 → 策略假设（信号 / 执行是否定稿）→ `run_id` → 关键指标 → 下一动作。
-- 给出配置路径与报告路径。
-- 勿把父项目旧术语写入配置。
+- 写明阶段与**闸门/旁路标签**（完整策略 vs sparse / execution_template）。  
+- 因子结论 → 策略假设 → `run_id` → 关键指标 + invested + 退出结构摘要 → 下一动作。  
+- 给出配置路径与报告路径。  
+- 勿把父项目旧术语或可抄参数配方写入配置。  

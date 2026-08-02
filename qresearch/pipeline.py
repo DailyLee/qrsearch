@@ -8,6 +8,8 @@ from typing import Any
 import polars as pl
 
 from qresearch.config import get_settings, load_research_config
+from qresearch.engines.analysis.evaluation_check import check_evaluation_years
+from qresearch.engines.analysis.invested import mean_invested_from_equity
 from qresearch.engines.analysis.overfit import attach_overfit_metrics
 from qresearch.engines.analysis.pit_audit import run_pit_audit
 from qresearch.engines.analysis.report import (
@@ -18,10 +20,23 @@ from qresearch.engines.analysis.report import (
 from qresearch.engines.backtest.session import run_backtest
 from qresearch.engines.data.ingest import load_events
 from qresearch.engines.data.panel import load_price_panel
-from qresearch.engines.experiment.optimize import run_optuna
+from qresearch.engines.experiment.best_params import optimize_params_to_patches
+from qresearch.engines.experiment.optimize import OptimizeError, run_signal_threshold_search
 from qresearch.engines.experiment.registry import RunWriter
-from qresearch.engines.experiment.sensitivity import parse_sensitivity_args, run_sensitivity_grid
+from qresearch.engines.experiment.sensitivity import (
+    parse_sensitivity_args,
+    parse_sensitivity_extended,
+    run_sensitivity_grid,
+)
+from qresearch.engines.experiment.sweep import run_signal_sweep
 from qresearch.engines.experiment.walkforward import run_walk_forward
+from qresearch.engines.factor.band_ic import run_band_ic
+from qresearch.engines.factor.diagnostics import (
+    corr_top_pairs,
+    feature_corr_matrix,
+    quantile_monotonicity,
+    reject_near_constant_features,
+)
 from qresearch.engines.factor.ic import (
     compute_alpha_beta_table,
     compute_ic_table,
@@ -66,6 +81,10 @@ def pipeline_research(
         bt.metrics,
         n_trials=int(config.gates.n_trials_assumed or 1),
     )
+    inv = mean_invested_from_equity(bt.equity)
+    metrics["mean_invested"] = inv.get("mean_invested")
+    metrics["empty_cash_share"] = inv.get("empty_cash_share")
+    metrics["invested_definition"] = inv.get("definition")
     bt.metrics = metrics
 
     pl.DataFrame(bt.equity).write_csv(writer.artifact_path("equity.csv"))
@@ -74,6 +93,9 @@ def pipeline_research(
     if metrics.get("yearly"):
         writer.write_json("artifacts/yearly_metrics.json", metrics["yearly"])
     writer.write_json("artifacts/rejects_summary.json", bt.rejects[:5000])
+
+    eval_check = check_evaluation_years(config, profile)
+    writer.write_json("artifacts/evaluation_check.json", eval_check)
 
     pit = run_pit_audit(events, panel, config, strict=bool(config.gates.pit_strict))
     writer.write_json("artifacts/pit_audit.json", pit)
@@ -195,6 +217,8 @@ def pipeline_research(
             "pit_status": pit.get("status"),
             "n_trials_assumed": config.gates.n_trials_assumed,
             "hypothesis": config.hypothesis.model_dump(),
+            "evaluation": config.evaluation.model_dump(),
+            "evaluation_check": eval_check,
             "study_id": config.hypothesis.study_id,
             "gates": gates,
             "n_factor_cols": len(feat_cols),
@@ -217,6 +241,11 @@ def pipeline_research(
             "metrics": metrics,
             "gates": gates,
             "hypothesis": config.hypothesis.model_dump(),
+            "evaluation": config.evaluation.model_dump(),
+            "evaluation_check": eval_check,
+            "mean_invested": metrics.get("mean_invested"),
+            "empty_cash_share": metrics.get("empty_cash_share"),
+            "ann_excess": metrics.get("ann_excess"),
             "sample_profile": {
                 "n_events": profile.get("n_events"),
                 "n_instruments": profile.get("n_instruments"),
@@ -309,6 +338,23 @@ def pipeline_factor_compare(
     )
     if quant.height:
         quant.write_csv(writer.artifact_path("quantile_returns.csv"))
+
+    rejected_constant = reject_near_constant_features(ic_events, ic_feats)
+    keep_feats = [f for f in ic_feats if f not in {r["feature"] for r in rejected_constant}]
+    corr_df = feature_corr_matrix(ic_events, keep_feats, method="spearman")
+    if corr_df.height:
+        corr_df.write_csv(writer.artifact_path("factor_corr.csv"))
+    top_pairs = corr_top_pairs(corr_df, top_n=10)
+    mono = quantile_monotonicity(quant)
+    writer.write_json(
+        "artifacts/factor_diagnostics.json",
+        {
+            "rejected_constant": rejected_constant,
+            "corr_top_pairs": top_pairs,
+            "monotonicity": mono,
+        },
+    )
+
     ab = compute_alpha_beta_table(
         ic_events, panel, ic_feats, config.ic_horizons, benchmark=bench
     )
@@ -377,6 +423,9 @@ def pipeline_factor_compare(
             "icir_top": icir_top,
             "alpha_top": alpha_top,
             "excess_ic_top": excess_ic_top,
+            "corr_top_pairs": top_pairs,
+            "monotonicity": mono,
+            "rejected_constant": rejected_constant,
             "promotable": False,
         },
         "artifacts": {
@@ -385,6 +434,8 @@ def pipeline_factor_compare(
             "ic_summary": str(writer.artifact_path("ic_summary.csv")),
             "icir_summary": str(writer.artifact_path("icir_summary.csv")),
             "quantile_returns": str(writer.artifact_path("quantile_returns.csv")),
+            "factor_corr": str(writer.artifact_path("factor_corr.csv")),
+            "factor_diagnostics": str(writer.artifact_path("factor_diagnostics.json")),
             "alpha_beta_summary": str(writer.artifact_path("alpha_beta_summary.csv")),
             "preprocess_report": str(writer.artifact_path("preprocess_report.json")),
             "events_preprocessed": str(writer.artifact_path("events_preprocessed.parquet")),
@@ -401,45 +452,151 @@ def pipeline_optimize(
     events_path: str | Path | list[str],
     config_path: str | Path | None = None,
     *,
-    n_trials: int = 20,
-    feature: str = "features.box_quality",
+    feature: str | None = None,
+    side: str = "auto",
+    keep_frac: str = "0.1,0.2,0.3,0.4",
+    n_trials: int | None = None,
 ) -> dict[str, Any]:
+    """Direction-aware signal threshold grid (not absolute high-quantile Optuna)."""
     settings = get_settings()
     config = load_research_config(config_path)
-    config.gates.n_trials_assumed = max(int(config.gates.n_trials_assumed or 1), int(n_trials))
     writer = RunWriter(settings.runs_dir)
     writer.write_config_snapshot(config)
     events = load_events(events_path, config)
     panel = load_price_panel(events, config, cache_dir=settings.cache_dir / "prices")
-    opt = run_optuna(events, panel, config, n_trials=n_trials, feature=feature)
-    writer.write_json(
-        "artifacts/optuna_trials.json",
-        {**opt, "n_trials": n_trials, "n_trials_assumed": config.gates.n_trials_assumed},
+    opt = run_signal_threshold_search(
+        events,
+        panel,
+        config,
+        feature=feature,
+        side=side,
+        keep_fracs=keep_frac,
+        max_grid=n_trials,
     )
+    n_grid = int(opt.get("n_grid") or 0)
+    config.gates.n_trials_assumed = max(int(config.gates.n_trials_assumed or 1), n_grid)
+    unified = optimize_params_to_patches(
+        dict(opt.get("best_params") or {}),
+        metric="sharpe",
+        best_value=opt.get("best_value"),
+    )
+    opt_out = {
+        **opt,
+        "best_params": {**(opt.get("best_params") or {}), "patches": unified["patches"]},
+        "best_params_unified": unified,
+        "n_trials_assumed": config.gates.n_trials_assumed,
+    }
+    writer.write_json(
+        "artifacts/signal_threshold_trials.json",
+        opt_out,
+    )
+    # legacy alias path for older readers
+    writer.write_json("artifacts/optuna_trials.json", opt_out)
     writer.write_meta(
         {
             "command": "pipeline.optimize",
-            "best": opt.get("best_params"),
-            "n_trials": n_trials,
+            "method": "signal_quantile_grid",
+            "best": opt_out.get("best_params"),
+            "side": opt.get("side"),
+            "feature": opt.get("feature"),
+            "n_grid": n_grid,
             "n_trials_assumed": config.gates.n_trials_assumed,
         }
     )
     return {
         "run_id": writer.run_id,
         "summary": {
-            "best_params": opt.get("best_params"),
+            "best_params": opt_out.get("best_params"),
+            "best_params_unified": unified,
             "best_value": opt.get("best_value"),
-            "n_trials": n_trials,
+            "side": opt.get("side"),
+            "feature": opt.get("feature"),
+            "method": "signal_quantile_grid",
+            "n_grid": n_grid,
+            "n_trials": n_grid,
             "n_trials_assumed": config.gates.n_trials_assumed,
         },
         "artifacts": {
             "run_dir": str(writer.root),
+            "signal_threshold_trials": str(
+                writer.artifact_path("signal_threshold_trials.json")
+            ),
             "optuna_trials": str(writer.artifact_path("optuna_trials.json")),
         },
         "next_actions": [
             {
                 "op": "pipeline.research",
-                "reason": "apply_best_params",
+                "reason": "apply_best_params_to_new_yaml",
+                "n_trials_assumed": config.gates.n_trials_assumed,
+            }
+        ],
+    }
+
+
+def pipeline_sweep(
+    events_path: str | Path | list[str],
+    config_path: str | Path | None = None,
+    *,
+    set_specs: list[str],
+    metric: str = "sharpe",
+    max_grid: int = 64,
+) -> dict[str, Any]:
+    """Multi-filter signal grid (--set); not joint with sensitivity knobs."""
+    settings = get_settings()
+    config = load_research_config(config_path)
+    writer = RunWriter(settings.runs_dir)
+    writer.write_config_snapshot(config)
+    events = load_events(events_path, config)
+    panel = load_price_panel(events, config, cache_dir=settings.cache_dir / "prices")
+    out = run_signal_sweep(
+        events,
+        panel,
+        config,
+        set_specs=set_specs,
+        metric=metric,
+        max_grid=max_grid,
+    )
+    n_grid = int(out.get("n_grid") or 0)
+    config.gates.n_trials_assumed = max(int(config.gates.n_trials_assumed or 1), n_grid)
+    # grid CSV without nested patches
+    grid_rows = []
+    for r in out["rows"]:
+        flat = {k: v for k, v in r.items() if k not in ("patches", "assignments")}
+        grid_rows.append(flat)
+    if grid_rows:
+        pl.DataFrame(grid_rows).write_csv(writer.artifact_path("sweep_grid.csv"))
+    summary = {
+        "n_grid": n_grid,
+        "truncated": out.get("truncated"),
+        "metric": metric,
+        "best_params": out.get("best_params"),
+        "best_value": out.get("best_value"),
+        "method": "signal_sweep",
+        "n_trials_assumed": config.gates.n_trials_assumed,
+    }
+    writer.write_json("artifacts/sweep_summary.json", summary)
+    writer.write_meta(
+        {
+            "command": "pipeline.sweep",
+            "method": "signal_sweep",
+            "n_grid": n_grid,
+            "truncated": out.get("truncated"),
+            "n_trials_assumed": config.gates.n_trials_assumed,
+            "best": out.get("best_params"),
+        }
+    )
+    return {
+        "run_id": writer.run_id,
+        "summary": summary,
+        "artifacts": {
+            "run_dir": str(writer.root),
+            "sweep_grid": str(writer.artifact_path("sweep_grid.csv")),
+            "sweep_summary": str(writer.artifact_path("sweep_summary.json")),
+        },
+        "next_actions": [
+            {
+                "op": "config.apply-best",
+                "reason": "write_patched_yaml_then_research",
                 "n_trials_assumed": config.gates.n_trials_assumed,
             }
         ],
@@ -453,12 +610,36 @@ def pipeline_sensitivity(
     cost_mult: str = "1,1.5,2",
     stop: str = "-0.05,-0.086,-0.12",
     take: str = "0.10,0.158,0.20",
-    max_grid: int = 27,
+    max_hold: str | None = None,
+    max_weight: str | None = None,
+    max_new: str | None = None,
+    sizing_base: str | None = None,
+    max_names_per_industry: str | None = None,
+    max_new_per_industry: str | None = None,
+    max_grid: int = 64,
 ) -> dict[str, Any]:
     settings = get_settings()
     config = load_research_config(config_path)
     cms, stops, takes = parse_sensitivity_args(cost_mult, stop, take)
-    n_grid_est = min(max_grid, max(1, len(cms) * len(stops) * len(takes)))
+    ext = parse_sensitivity_extended(
+        max_hold=max_hold,
+        max_weight=max_weight,
+        max_new=max_new,
+        sizing_base=sizing_base,
+        max_names_per_industry=max_names_per_industry,
+        max_new_per_industry=max_new_per_industry,
+    )
+    n_est = len(cms) * len(stops) * len(takes)
+    for k in (
+        "max_hold",
+        "max_weight",
+        "max_new",
+        "sizing_base",
+        "max_names_per_industry",
+        "max_new_per_industry",
+    ):
+        n_est *= len(ext[k]) if k in ext else 1
+    n_grid_est = min(max_grid, max(1, n_est))
     config.gates.n_trials_assumed = max(int(config.gates.n_trials_assumed or 1), n_grid_est)
 
     writer = RunWriter(settings.runs_dir)
@@ -473,15 +654,20 @@ def pipeline_sensitivity(
         stops=stops,
         takes=takes,
         max_grid=max_grid,
+        **ext,
     )
     pl.DataFrame(grid["rows"]).write_csv(writer.artifact_path("sensitivity_grid.csv"))
-    writer.write_json("artifacts/sensitivity_summary.json", {
-        "n_grid": grid["n_grid"],
-        "truncated": grid["truncated"],
-        "best_by_sharpe": grid["best_by_sharpe"],
-        "n_robust_cost2_nonneg_sharpe": grid["n_robust_cost2_nonneg_sharpe"],
-        "n_trials_assumed": config.gates.n_trials_assumed,
-    })
+    writer.write_json(
+        "artifacts/sensitivity_summary.json",
+        {
+            "n_grid": grid["n_grid"],
+            "truncated": grid["truncated"],
+            "best_by_sharpe": grid["best_by_sharpe"],
+            "best_params": grid.get("best_params"),
+            "n_robust_cost2_nonneg_sharpe": grid["n_robust_cost2_nonneg_sharpe"],
+            "n_trials_assumed": config.gates.n_trials_assumed,
+        },
+    )
     writer.write_meta(
         {
             "command": "pipeline.sensitivity",
@@ -497,6 +683,7 @@ def pipeline_sensitivity(
             "n_grid": grid["n_grid"],
             "truncated": grid["truncated"],
             "best_by_sharpe": grid["best_by_sharpe"],
+            "best_params": grid.get("best_params"),
             "n_robust_cost2_nonneg_sharpe": grid["n_robust_cost2_nonneg_sharpe"],
             "promotable": False,
             "n_trials_assumed": config.gates.n_trials_assumed,
@@ -508,9 +695,92 @@ def pipeline_sensitivity(
         },
         "next_actions": [
             {
-                "op": "pipeline.research",
+                "op": "config.apply-best",
                 "reason": "freeze_best_execution_risk_in_new_yaml",
                 "n_trials_assumed": config.gates.n_trials_assumed,
             }
+        ],
+    }
+
+
+def pipeline_band_ic(
+    events_path: str | Path | list[str],
+    config_path: str | Path | None = None,
+    *,
+    feature: str,
+    lo: float,
+    hi: float,
+    horizons: str | None = None,
+    inside_feature: list[str] | None = None,
+    run_id: str | None = None,
+) -> dict[str, Any]:
+    """Full-sample vs in-band Rank IC for an interval-factor hypothesis (train only)."""
+    settings = get_settings()
+    config = load_research_config(config_path)
+    writer = RunWriter(settings.runs_dir, run_id=run_id)
+    writer.write_config_snapshot(config)
+    events = load_events(events_path, config)
+    panel = load_price_panel(events, config, cache_dir=settings.cache_dir / "prices")
+    if horizons:
+        hs = [int(x.strip()) for x in str(horizons).split(",") if x.strip()]
+    else:
+        hs = list(config.ic_horizons)
+    inside = list(inside_feature or [])
+    if not inside:
+        # default: up to 3 other resolved feature cols
+        feats = resolve_feature_cols(events, config.factors)
+        inside = [f for f in feats if f != feature][:3]
+    out = run_band_ic(
+        events,
+        panel,
+        feature=feature,
+        lo=float(lo),
+        hi=float(hi),
+        horizons=hs,
+        inside_features=inside,
+        icir_min_periods=int(config.factors.icir_min_periods),
+    )
+    if out["rows"]:
+        pl.DataFrame(out["rows"]).write_csv(writer.artifact_path("band_ic_compare.csv"))
+    if out["inside_rows"]:
+        pl.DataFrame(out["inside_rows"]).write_csv(writer.artifact_path("band_ic_inside.csv"))
+    summary = {
+        "feature": out["feature"],
+        "lo": out["lo"],
+        "hi": out["hi"],
+        "n_full": out["n_full"],
+        "n_band": out["n_band"],
+        "keep_frac": out["keep_frac"],
+        "band_stronger": out["band_stronger"],
+        "band_stronger_share": out["band_stronger_share"],
+        "rows": out["rows"],
+        "inside_n": len(out["inside_rows"]),
+        "promotable": False,
+    }
+    writer.write_json("artifacts/band_ic_summary.json", {**out, "summary": summary})
+    writer.write_meta(
+        {
+            "command": "factor.band-ic",
+            "feature": feature,
+            "lo": lo,
+            "hi": hi,
+            "n_full": out["n_full"],
+            "n_band": out["n_band"],
+            "band_stronger": out["band_stronger"],
+            "promotable": False,
+        }
+    )
+    return {
+        "run_id": writer.run_id,
+        "summary": summary,
+        "artifacts": {
+            "run_dir": str(writer.root),
+            "band_ic_summary": str(writer.artifact_path("band_ic_summary.json")),
+            "band_ic_compare": str(writer.artifact_path("band_ic_compare.csv")),
+            "band_ic_inside": str(writer.artifact_path("band_ic_inside.csv")),
+        },
+        "next_actions": [
+            {"op": "pipeline.sweep", "reason": "search_between_bounds_on_train"},
+            {"op": "strategy_design", "reason": "freeze_band_plus_mono_rank_yaml"},
         ],
     }
