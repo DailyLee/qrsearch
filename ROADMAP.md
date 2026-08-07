@@ -1,7 +1,7 @@
 # qresearch Roadmap
 
 定位：**事件驱动 A 股研究内核 + Agent CLI**（事件 CSV 进 → 因子/策略/回测/门禁 → 可选晋升与信号）。  
-不做第二套交易框架；行情继续只经 zer0share。工程纪律见 [agent.md](agent.md)（含配置·用例·skill·md 对齐）；研究闭环见 [`.cursor/skills/qresearch/SKILL.md`](.cursor/skills/qresearch/SKILL.md)。
+不做第二套交易框架；行情继续只经 zer0share。工程纪律见 [agent.md](agent.md)（含配置·用例·skill·md 对齐）；研究闭环见 [`.agents/skills/qresearch/SKILL.md`](.agents/skills/qresearch/SKILL.md)（Cursor 镜像位于 `.cursor/skills/`）。
 
 状态图例：`done` 已有 · `next` 近期优先 · `later` 中期 · `out` 明确不做（或仓外）。
 

@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|StrReplace|Delete|EditNotebook",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python .codex/hooks/protect_events.py"
+          }
+        ]
+      }
+    ]
+  }
+}

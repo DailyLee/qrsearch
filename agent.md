@@ -1,8 +1,8 @@
 # qresearch 工程与 Agent 规范
 
-本文件是开发者与 Agent 的**工程契约**。研究闭环（因子→策略→回测→质量闸门）见 [`.cursor/skills/qresearch/SKILL.md`](.cursor/skills/qresearch/SKILL.md) 与 [quality-gates.md](.cursor/skills/qresearch/quality-gates.md)。能力优先级见 [ROADMAP.md](ROADMAP.md)。
+本文件是开发者与 Agent 的**工程契约**。研究闭环（因子→策略→回测→质量闸门）见 [`.agents/skills/qresearch/SKILL.md`](.agents/skills/qresearch/SKILL.md) 与 [quality-gates.md](.agents/skills/qresearch/quality-gates.md)。能力优先级见 [ROADMAP.md](ROADMAP.md)。
 
-Cursor 始终生效的闸门摘要见 [`.cursor/rules/qresearch-dev.mdc`](.cursor/rules/qresearch-dev.mdc)（细节以本文为准）。
+Codex 的自动入口是 [AGENTS.md](AGENTS.md)，细节以本文为准。Cursor 的兼容规则摘要仍位于 [`.cursor/rules/qresearch-dev.mdc`](.cursor/rules/qresearch-dev.mdc)；`.cursor/skills/` 是 `.agents/skills/` 的镜像，不作为权威来源。
 
 ---
 
@@ -14,7 +14,7 @@ Cursor 始终生效的闸门摘要见 [`.cursor/rules/qresearch-dev.mdc`](.curso
 |----|------|------------|
 | **配置** | `qresearch/config/models.py`；必要时 `configs/examples/*` 骨架（勿塞策略信号） | 字段名、类型、安全默认、YAML 示意 |
 | **用例** | `tests/**`；改成交/退出/涨跌停等 → 合成 panel 单测 | 默认行为、边界、回归；相关用例 `pytest -q` 通过 |
-| **Skill** | `.cursor/skills/qresearch/`（至少触及的 `SKILL.md` / `reference.md` / 专题 md） | Agent 可执行约定、命令、禁区、研究分流 |
+| **Skill** | `.agents/skills/qresearch/`（至少触及的 `SKILL.md` / `reference.md` / 专题 md；同步 `.cursor/skills/` 镜像） | Agent 可执行约定、命令、禁区、研究分流 |
 | **文档 md** | 根目录 `README.md`；破坏契约时还有本文 / `ROADMAP.md` 状态行 | 用户可见 CLI、全局旗标、领域词、快速上手 |
 
 ### 触发与最小同步面
@@ -70,7 +70,7 @@ Cursor 始终生效的闸门摘要见 [`.cursor/rules/qresearch-dev.mdc`](.curso
 | [agent.md](agent.md) | 本文：工程契约与四位一体对齐 |
 | [AGENTS.md](AGENTS.md) | 入口指针 |
 | [ROADMAP.md](ROADMAP.md) | 能力演进与优先级 |
-| [.cursor/skills/qresearch/SKILL.md](.cursor/skills/qresearch/SKILL.md) | 研究 Agent 主流程 |
-| [.cursor/skills/qresearch/quality-gates.md](.cursor/skills/qresearch/quality-gates.md) | 定稿硬否决（密度/退出/仓位/多目标） |
-| [.cursor/skills/qresearch/research-loop.md](.cursor/skills/qresearch/research-loop.md) | 分支 / 停手 / **反模式唯一清单** |
-| [.cursor/skills/qresearch/reference.md](.cursor/skills/qresearch/reference.md) | CLI / ingest / 信封速查 |
+| [.agents/skills/qresearch/SKILL.md](.agents/skills/qresearch/SKILL.md) | 研究 Agent 主流程（权威） |
+| [.agents/skills/qresearch/quality-gates.md](.agents/skills/qresearch/quality-gates.md) | 定稿硬否决（密度/退出/仓位/多目标） |
+| [.agents/skills/qresearch/research-loop.md](.agents/skills/qresearch/research-loop.md) | 分支 / 停手 / **反模式唯一清单** |
+| [.agents/skills/qresearch/reference.md](.agents/skills/qresearch/reference.md) | CLI / ingest / 信封速查 |
