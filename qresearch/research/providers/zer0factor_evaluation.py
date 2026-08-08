@@ -41,11 +41,25 @@ def _require_snapshot_hash(snapshot: FeatureSnapshot) -> str:
     meta_digest = meta.get("feature_snapshot_hash") if isinstance(meta, dict) else None
     if not isinstance(digest, str) or not digest or meta_digest != digest:
         raise ResearchDataError("feature snapshot manifest hash mismatch")
-    hash_input_manifest = dict(snapshot.manifest)
-    hash_input_manifest.pop("feature_snapshot_hash", None)
-    hash_input_manifest.pop("meta", None)
-    if _snapshot_hash(snapshot.frame, hash_input_manifest) != digest:
-        raise ResearchDataError("feature snapshot content hash mismatch")
+    persisted_path = snapshot.manifest.get("feature_snapshot_path")
+    if persisted_path is not None:
+        if not isinstance(persisted_path, str) or not persisted_path:
+            raise ResearchDataError("feature snapshot persisted path mismatch")
+        path = Path(persisted_path)
+        if not path.is_file() or sha256_path(path) != digest:
+            raise ResearchDataError("feature snapshot persisted hash mismatch")
+        try:
+            persisted_frame = pl.read_parquet(path)
+        except (OSError, pl.exceptions.PolarsError) as exc:
+            raise ResearchDataError("invalid persisted feature snapshot") from exc
+        if not persisted_frame.equals(snapshot.frame):
+            raise ResearchDataError("feature snapshot persisted frame mismatch")
+    else:
+        hash_input_manifest = dict(snapshot.manifest)
+        hash_input_manifest.pop("feature_snapshot_hash", None)
+        hash_input_manifest.pop("meta", None)
+        if _snapshot_hash(snapshot.frame, hash_input_manifest) != digest:
+            raise ResearchDataError("feature snapshot content hash mismatch")
     return digest
 
 
@@ -280,6 +294,11 @@ def run_factor_screening(
     if train_samples.is_empty():
         raise ResearchDataError("factor screening requires train membership")
 
+    snapshot_path = snapshot.manifest.get("feature_snapshot_path")
+    if not isinstance(snapshot_path, str) or not snapshot_path:
+        raise ResearchDataError(
+            "factor screening requires a persisted feature snapshot"
+        )
     snapshot_hash = _require_snapshot_hash(snapshot)
     input_hashes = dataset.metadata.get("input_hashes")
     dataset_snapshot_hash = input_hashes.get("features") if isinstance(input_hashes, dict) else None

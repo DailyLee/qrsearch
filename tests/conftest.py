@@ -8,9 +8,12 @@ import pytest
 from qresearch.config.models import (
     EntryFilterConfig,
     ExecutionConfig,
+    FeatureRefConfig,
+    FeatureSourceConfig,
     PortfolioConfig,
     ResearchConfig,
     RiskConfig,
+    SampleConfig,
 )
 from qresearch.engines.data.panel import PricePanel
 
@@ -23,6 +26,21 @@ def _sessions(n: int = 40, start: date = date(2024, 1, 2)) -> list[date]:
             out.append(d)
         d += timedelta(days=1)
     return out
+
+
+def research_config(**updates: object) -> ResearchConfig:
+    """Complete market config for tests of lower-level iteration-1 engines."""
+    return ResearchConfig(
+        sample=SampleConfig(
+            universe="synthetic",
+            start_date=date(2024, 1, 1),
+            end_date=date(2025, 12, 31),
+        ),
+        features=FeatureSourceConfig(
+            refs=[FeatureRefConfig(name="synthetic", availability_lag_sessions=0)]
+        ),
+        **updates,
+    )
 
 
 @pytest.fixture
@@ -69,7 +87,7 @@ def panel(sessions: list[date]) -> PricePanel:
 
 @pytest.fixture
 def base_config() -> ResearchConfig:
-    return ResearchConfig(
+    return research_config(
         portfolio=PortfolioConfig(
             starting_cash=100_000,
             max_weight=0.5,

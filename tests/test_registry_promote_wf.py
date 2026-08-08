@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from conftest import research_config
+
 import json
 from datetime import date
 from pathlib import Path
@@ -18,7 +20,7 @@ def test_run_writer_list_and_archive(tmp_path: Path):
     runs = tmp_path / "runs"
     w = RunWriter(runs, run_id="run_demo")
     w.write_meta({"note": "x", "status": "ok"})
-    w.write_config_snapshot(ResearchConfig())
+    w.write_config_snapshot(research_config())
     w.write_json("report/conclusion.json", {"promotable": False, "metrics": {"sharpe": 0.1}})
 
     rows = list_runs(runs)
@@ -83,7 +85,7 @@ def test_run_walk_forward_aggregate_with_stub(panel, sessions):
             rejects=[],
         )
 
-    cfg = ResearchConfig(
+    cfg = research_config(
         walk_forward=WalkForwardConfig(mode="expanding", objective="trade_weighted_sharpe")
     )
     out = run_walk_forward(events, panel, cfg, backtest_fn=stub_bt)
@@ -92,7 +94,7 @@ def test_run_walk_forward_aggregate_with_stub(panel, sessions):
     assert "deflated_sharpe" in out["aggregate"]
     assert out["aggregate"]["total_trades"] >= 1
 
-    cfg_mean = ResearchConfig(
+    cfg_mean = research_config(
         walk_forward=WalkForwardConfig(mode="expanding", objective="mean_sharpe", min_trades=1)
     )
     out2 = run_walk_forward(events, panel, cfg_mean, backtest_fn=stub_bt)

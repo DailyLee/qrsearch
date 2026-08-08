@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from conftest import research_config
+
 from datetime import date
 
 import polars as pl
@@ -88,7 +90,7 @@ def test_build_ranked_uses_config_signals():
             "features.bandwidth_percent": [25.0, 12.0],
         }
     )
-    cfg = ResearchConfig(
+    cfg = research_config(
         signals=SignalsConfig(
             filters=[FilterRule(field="features.box_quality", op="ge", value=0.94)],
             rank_by=[RankBy(field="features.bandwidth_percent", ascending=True)],

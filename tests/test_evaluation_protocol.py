@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 from pathlib import Path
 
 import pytest
 import yaml
 
 from qresearch.config.models import (
-    AppSettings,
     EvaluationConfig,
+    FeatureRefConfig,
+    FeatureSourceConfig,
     GatesConfig,
     HoldoutWindow,
     ResearchConfig,
+    SampleConfig,
 )
 from qresearch.engines.analysis.evaluation_check import check_evaluation_years
 from qresearch.engines.analysis.invested import mean_invested_from_equity
@@ -26,7 +29,20 @@ from qresearch.engines.analysis.split_comparison import (
     latest_run_ids_from_decisions,
 )
 from qresearch.engines.experiment.best_params import apply_best_to_yaml
-from qresearch.pipeline import pipeline_research
+
+
+def _research_config(**updates: object) -> ResearchConfig:
+    return ResearchConfig(
+        sample=SampleConfig(
+            universe="synthetic",
+            start_date=date(2024, 1, 1),
+            end_date=date(2024, 12, 31),
+        ),
+        features=FeatureSourceConfig(
+            refs=[FeatureRefConfig(name="synthetic", availability_lag_sessions=0)]
+        ),
+        **updates,
+    )
 
 
 def test_mean_invested_in_metrics_shape():
@@ -115,7 +131,7 @@ def test_gates_absolute_plus_optional_ir_extra():
 
 
 def test_evaluation_syncs_primary_metric():
-    cfg = ResearchConfig(
+    cfg = _research_config(
         evaluation=EvaluationConfig(primary_metric="excess"),
         gates=GatesConfig(primary_metric="absolute"),
     )
@@ -123,7 +139,7 @@ def test_evaluation_syncs_primary_metric():
 
 
 def test_evaluation_years_warn():
-    cfg = ResearchConfig(
+    cfg = _research_config(
         evaluation=EvaluationConfig(
             train_years=["2019", "2020"],
             holdouts=[HoldoutWindow(years=["2025"], role="stress")],
@@ -215,58 +231,8 @@ def test_apply_best_yaml_no_bom(tmp_path: Path):
     assert loaded["signals"]["filters"][0]["value"] == 1.0
 
 
-def test_pipeline_research_writes_invested_and_eval_check(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, panel, events, base_config
-):
-    runs = tmp_path / "runs"
-    cache = tmp_path / "cache"
-    cfg = base_config.model_copy(deep=True)
-    cfg.gates = GatesConfig(min_oos_folds=0, min_trades=1, min_oos_sharpe=None)
-    cfg.evaluation = EvaluationConfig(
-        train_years=["2024"],
-        holdouts=[HoldoutWindow(years=["2025"], role="stress", label="bull_stress")],
-    )
-    cfg.benchmark.instrument = ""
-
-    monkeypatch.setattr(
-        "qresearch.pipeline.get_settings",
-        lambda: AppSettings(runs_dir=runs, cache_dir=cache, studies_dir=tmp_path / "studies"),
-    )
-    monkeypatch.setattr(
-        "qresearch.pipeline.load_research_config",
-        lambda _path=None, overrides=None: cfg,
-    )
-    monkeypatch.setattr("qresearch.pipeline.load_events", lambda *_a, **_k: events)
-    monkeypatch.setattr("qresearch.pipeline.load_price_panel", lambda *_a, **_k: panel)
-
-    result = pipeline_research(
-        "dummy.csv",
-        run_id="eval_research_demo",
-        do_ic=False,
-        do_wf=False,
-    )
-    assert result["run_id"] == "eval_research_demo"
-    root = Path(result["artifacts"]["run_dir"])
-    metrics_path = root / "artifacts" / "metrics.json"
-    assert metrics_path.exists()
-    metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
-    assert metrics.get("mean_invested") is not None
-    assert 0.0 <= float(metrics["mean_invested"]) <= 1.0
-    assert "empty_cash_share" in metrics
-    assert result["summary"].get("mean_invested") == metrics["mean_invested"]
-
-    eval_path = root / "artifacts" / "evaluation_check.json"
-    assert eval_path.exists()
-    eval_check = json.loads(eval_path.read_text(encoding="utf-8"))
-    # sample is 2024-only; evaluation declares 2025 holdout → warn or ok subset check
-    assert eval_check["status"] in ("ok", "warn")
-    assert result["summary"]["evaluation_check"]["status"] == eval_check["status"]
-    assert "absolute_ok" in (result["summary"].get("gates") or {})
-    assert "excess_ok" in (result["summary"].get("gates") or {})
-
-
 def test_report_html_includes_invested_and_rebuild_from_equity(tmp_path: Path):
-    cfg = ResearchConfig()
+    cfg = _research_config()
     gates = evaluate_gates(
         {
             "n_trades": 20,

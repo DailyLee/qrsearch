@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from conftest import research_config
+
 from datetime import date, timedelta
 
 import polars as pl
@@ -99,7 +101,7 @@ def test_turnover_and_relative_ir():
     assert rel["benchmark_available"] is True
     assert rel["information_ratio"] is not None
 
-    cfg = ResearchConfig(benchmark=BenchmarkConfig(instrument="000852.SH"))
+    cfg = research_config(benchmark=BenchmarkConfig(instrument="000852.SH"))
     m = compute_extended_metrics(equity, trades, 1_000_000.0, panel=panel, config=cfg)
     assert m["sharpe"] != 0.0 or m["n_sessions"] > 0
     assert m["capacity"] in ("heuristic_adv", "unavailable")

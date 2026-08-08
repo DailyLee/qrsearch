@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from conftest import research_config
+
 import json
 from datetime import date
 from pathlib import Path
@@ -23,7 +25,7 @@ def _events() -> pl.DataFrame:
 
 
 def _config() -> ResearchConfig:
-    return ResearchConfig(adjustment={"mode": "none"}, benchmark={"instrument": ""})
+    return research_config(adjustment={"mode": "none"}, benchmark={"instrument": ""})
 
 
 def _bars() -> pl.DataFrame:

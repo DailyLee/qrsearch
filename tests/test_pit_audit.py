@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from conftest import research_config
+
 from datetime import date, timedelta
 
 import polars as pl
@@ -55,7 +57,7 @@ def test_pit_audit_reports_session_pit_and_passes_decision_order():
         instruments=["000852.SH", "AAA001.SZ"],
     )
     panel.build_index()
-    audit = run_pit_audit(events, panel, ResearchConfig(), strict=False)
+    audit = run_pit_audit(events, panel, research_config(), strict=False)
     assert audit["status"] in ("pass", "warn")
     assert audit["adjustment"]["methodology"] == "qfq_session_pit"
     assert audit["adjustment"]["full_pit_adj_factor_asof_session"] is True
@@ -96,6 +98,6 @@ def test_pit_audit_fails_when_decision_after_entry():
         instruments=["AAA001.SZ"],
     )
     panel.build_index()
-    audit = run_pit_audit(events, panel, ResearchConfig(), strict=False)
+    audit = run_pit_audit(events, panel, research_config(), strict=False)
     assert audit["status"] == "fail"
     assert any("decision_after_entry" in f for f in audit["failures"])

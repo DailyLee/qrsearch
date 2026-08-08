@@ -1,120 +1,126 @@
 # qresearch
 
-Event-driven A-share research kernel and ops CLI for research agents.
+Market-universe A-share research kernel and agent-friendly CLI.
+
+Iteration 2 materializes point-in-time market samples from zer0share, freezes already-materialized
+zer0factor values into a run, builds fixed-horizon labels, assigns explicit temporal roles, and delegates
+train-only factor screening to zer0factor's public `EvaluationService`. It does not expose strategy,
+optimization, backtest, event, or CSV commands.
 
 ## Install
 
 ```bash
-cd qrsearch
 python -m pip install -e ".[dev]"
 ```
 
-## Environment
+Market data comes only from zer0share `LocalPro`; factor values come only from an existing, read-only
+zer0factor `FactorStorage`. qresearch does not depend on vnpy and never creates fallback market or
+factor data.
 
-Copy `.env.example` to `.env` (optional):
+Optional environment variables:
 
-| Variable | Meaning |
-|----------|---------|
-| `ZER0SHARE_ROOT` | Path to zer0share repo (for `LocalPro` import) |
-| `ZER0SHARE_DATA` | Path to local parquet data directory |
-| `ZER0FACTOR_ROOT` | Path to zer0factor repo (for `FactorStorage` import) |
-| `ZER0FACTOR_FACTOR_DIR` | Existing zer0factor factor-partition directory (read-only) |
-| `ZER0FACTOR_DB_PATH` | Existing zer0factor factor registry DuckDB (read-only) |
-| `QRESEARCH_EVENTS` | Default events path / directory |
+- `ZER0SHARE_ROOT`: zer0share repository used to import `LocalPro`.
+- `ZER0SHARE_DATA`: local zer0share parquet root.
+- `ZER0FACTOR_ROOT`: zer0factor repository used for public storage/evaluation imports.
+- `ZER0FACTOR_FACTOR_DIR`: existing factor partition directory, opened read-only.
+- `ZER0FACTOR_DB_PATH`: existing factor registry DuckDB, opened read-only.
 
-Market data is loaded via zer0share `LocalPro`. This project does **not** depend on `vnpy` or `vnpy_portfoliostragtegy`.
+## Market factor workflow
 
-When a market-research run materializes zer0factor features, it reads each declared factor once and joins only values whose availability session exactly equals the observation's `asof_session`; it never creates or writes factor data.
-
-## Quick start
+Always use `--format json --quiet` for agent calls. stdout is one JSON envelope.
 
 ```bash
-# check vendor
-qr data ping --format json
+qr data ping --format json --quiet
+qr research factors --format json --quiet
 
-# validate event CSV mapping
-qr data validate-events --csv workspace/events/平台期扫描_批量_2019_合并_0.94.csv --config configs/examples/event_factors.yaml
+qr config new \
+  --out configs/experiments/<study>.yaml \
+  --study-id <study> \
+  --set sample.universe=<zer0share_universe> \
+  --set sample.start_date=<YYYY-MM-DD> \
+  --set sample.end_date=<YYYY-MM-DD> \
+  --set 'features.refs=[{name: <zer0factor_ref>, availability_lag_sessions: 0}]' \
+  --set 'evaluation.train_years=[<YYYY>]' \
+  --set 'evaluation.validate_years=[<YYYY>]' \
+  --set 'evaluation.holdouts=[{years: [<YYYY>], role: final}]' \
+  --format json --quiet
 
-# research pipeline (needs zer0share daily data)
-qr pipeline research --csv workspace/events/平台期扫描_批量_2019_合并_0.94.csv --config configs/examples/event_factors.yaml --format json --quiet
+qr research materialize --config configs/experiments/<study>.yaml --format json --quiet
+qr research evaluate --config configs/experiments/<study>.yaml --run-id <materialize_run_id> --format json --quiet
 ```
 
-Agent-friendly I/O: always use `--format json --quiet`. stdout is a single JSON envelope (`schema_version`, `summary`, `artifacts`, `next_actions`, `error`). Logs go to stderr.
+`research factors` only lists readable registry names. It does not read factor values, calculate
+formulas, or create a run.
 
-Global `--board limit10|limit20|all` overrides YAML `ingest.board` (default `limit10`: exclude 科创 688/689 + 创业 300/301). Study 20% boards separately with `--board limit20`.
+`research materialize` executes one fixed sequence: samples → features → price panel → labels →
+dataset → temporal roles. It writes the frozen artifacts below
+`workspace/runs/<run_id>/artifacts/`. After `feature_snapshot.parquet` is written, qresearch hashes
+those exact persisted bytes; the SHA-256 is copied into the snapshot manifest, nested snapshot meta,
+run meta, dataset input lineage, and factor-screening audit.
 
-Exit codes: `0` ok, `2` config, `3` data, `4` gate blocked, `5` dependency missing.
+`research evaluate` reuses the same run's frozen dataset and feature snapshot. With no `--run-id`,
+it first materializes a new run and evaluates that run. It sends only `role=train` membership and the
+frozen snapshot to zer0factor. validate and holdout rows are excluded from screening and must never be
+used to select factors. An explicit `--run-id` must already exist; a missing run is a data error and
+is never materialized by `evaluate`.
 
-## Domain terms
+Every materialized run writes exactly these stable artifacts:
 
-| Concept | Config key |
-|---------|------------|
-| Initial cash | `portfolio.starting_cash` |
-| Max name weight | `portfolio.max_weight` |
-| Max new entries / day | `portfolio.max_new_entries_per_day` |
-| Good-for-day order | `execution.order_validity_sessions=1` |
-| GTD multi-session | `execution.order_validity_sessions>1` |
-| Filter anchor | `execution.entry_filter.ref=decision_prior_close` |
-| Planned entry/exit | `entry_intent_date` / `exit_intent_date` |
-| PIT adjustment | `adjustment.as_of` |
+- `sample_set.parquet`
+- `feature_snapshot.parquet`
+- `feature_manifest.json`
+- `label_set.parquet`
+- `dataset.parquet`
+- `split_summary.json`
 
-## Daily open execution contract
+Evaluation additionally exposes zer0factor `summary.csv`, `summary.parquet`, `report.md`, metadata,
+and each factor's `clean_factor_data.parquet`, `daily_ic.parquet`, and
+`quantile_returns.parquet`. qresearch adds only `factor_redundancy.parquet` plus
+`factor_screening_manifest.json`; it does not maintain a second IC, quantile, monotonicity, or
+preprocessing implementation.
 
-`execution.price` governs ordinary entries and eligible non-stop/take exits (`open` by default; `close` is also supported). `exit_intent` exits use the close, while stop/take-profit exits use touch/gap proxies. Eligibility for every buy or sell candidate always uses zer0share's **same-session opening** `up_limit` / `down_limit`: an open at the limit-up is not buyable, an open at the limit-down is not sellable, and suspended sessions do not fill. The model does not simulate order queues, limit-open release timing, or the order book. Factor IC and theoretical forward returns do **not** apply these fill filters; they measure the price relationship, while the backtest separately measures executable results.
+## CLI and exit contract
 
-## Layout
+Current market-research commands:
 
+```text
+qr data ping
+qr data clear-cache
+qr research factors
+qr research materialize --config <yaml> [--run-id <id>]
+qr research evaluate --config <yaml> [--run-id <id>]
+qr config new --out configs/experiments/<name>.yaml --study-id <id> [--set key=value]
+qr study decision ...
+qr study list ...
 ```
-qresearch/              # library + CLI package
-configs/                # strategy YAML (examples/ + experiments/)
-tests/                  # unit tests (synthetic panel)
-workspace/              # local inputs + artifacts (gitignored; see workspace/README.md)
-  events/               # event CSVs
-  runs/                 # experiment runs
-  models/               # promoted model packages
-  cache/                # price panel cache
-```
+
+The CLI also retains read-only run/report utilities from existing completed runs. The event/factor
+comparison, strategy, optimization, rolling validation, backtest, and ops entry points are unavailable
+until Iteration 3 rebuilds them on the frozen market dataset.
+
+JSON envelopes include `schema_version`, `run_id`, `summary`, `artifacts`, `next_actions`, and
+`error`. Exit codes are `0` success, `2` configuration, `3` market/factor coverage or artifact
+audit failure, `4` blocked gate, and `5` missing dependency. Missing universe data or configured
+factor coverage is an error; materialization never reports a skipped success.
+
+## Example and experiment configs
+
+`configs/examples/market_factors.yaml` is the only example skeleton. Its universe, dates, temporal
+roles, and `features.refs` are intentionally incomplete, and its strategy signals are empty. Do not
+edit the example into an experiment. Use `qr config new` to write a new file under
+`configs/experiments/` and fill only real zer0factor registry references.
 
 ## Tests
 
 ```bash
-pytest -q
+python -m pytest -q
 ```
 
-Synthetic fixtures cover GFD/GTD, T+1, sizing, pre-trade state sensitivity, and JSON envelope parsing. Local e2e against zer0share is optional.
+Synthetic tests cover market membership, persisted snapshot identity, fixed-horizon/PIT labels,
+temporal purging, train-only zer0factor screening, historical limits, T+1, and lower-level execution
+correctness. Historical files below `workspace/events/**` and `workspace/events_ascii/**` remain
+read-only archival data; the product no longer consumes them.
 
-## Agent workflow
-
-This repo exposes **CLI tools only**. The research loop (factor analysis → write strategy YAML → backtest → quality gates → optimize / adjust → stop) is defined for agents in [`.agents/skills/qresearch/SKILL.md`](.agents/skills/qresearch/SKILL.md)（硬否决见同目录 `quality-gates.md`；开局脚手架 `qr config new`）。Codex reads the repository guidance in [AGENTS.md](AGENTS.md). Experiment configs go under `configs/experiments/`.
-
-Engineering principles: **[AGENTS.md](AGENTS.md)** — any change must keep **config · tests · skill · md** aligned (see §1).
-Product / research capability roadmap: **[ROADMAP.md](ROADMAP.md)**.
-
-## Reports
-
-`pipeline research` and `qr analyze report --run <run_id>` write a Chinese HTML report（净值/回撤/分年图可悬停读数，坐标含多档刻度；离线自包含，无 CDN）:
-
-- `workspace/runs/<run_id>/report/research_report_zh.html` (alias of `conclusion.html`)
-- `workspace/runs/<run_id>/report/conclusion.json` (metrics, IC, strategy, trade stats)
-- `workspace/runs/<run_id>/artifacts/pit_audit.json` (PIT / adjustment disclosure)
-- `workspace/runs/<run_id>/artifacts/metrics.json` (absolute + IR/turnover/capacity + deflated Sharpe)
-
-Sections: 门禁、因子、策略、回测（相对基准/换手/容量）、交易统计、过拟合/试次、PIT 审计、拒单、Walk-forward、产物路径。
-
-Research quality knobs in YAML `gates`: `n_trials_assumed`, `min_deflated_sharpe`, `max_n_trials`, `pit_strict`. CLI: `--n-trials-assumed`.
-
-## CLI map
-
-```
-qr data ping | validate-events | clear-cache
-qr config new --out configs/experiments/<name>.yaml --study-id ...   # scaffold from examples
-qr config apply-best --from-run ... --out configs/experiments/<name>_vN.yaml
-qr pipeline research|optimize|sweep|sensitivity
-qr validate rolling
-qr factor ic|compare|band-ic
-qr backtest run
-qr analyze report --run ...
-qr promote --run ... --model-id ... --version ...
-qr ops run --package ... --mode paper|signal --asof YYYYMMDD --csv ...
-qr runs list|show|compare|archive
-```
+Agent execution guidance is in [`.agents/skills/qresearch/SKILL.md`](.agents/skills/qresearch/SKILL.md).
+Engineering changes must keep configuration, tests, skill guidance, and this README aligned as defined
+by [`AGENTS.md`](AGENTS.md).

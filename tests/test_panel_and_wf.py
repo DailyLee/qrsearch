@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from conftest import research_config
+
 import hashlib
 from datetime import date
 
@@ -33,7 +35,7 @@ def test_derive_panel_range_extends_buffers():
             "instrument": ["A", "B"],
         }
     )
-    cfg = ResearchConfig(risk=RiskConfig(max_hold_sessions=10))
+    cfg = research_config(risk=RiskConfig(max_hold_sessions=10))
     start, end = derive_panel_range(events, cfg)
     assert start < date(2024, 1, 10)
     assert end >= date(2024, 2, 15)
@@ -48,7 +50,7 @@ def test_load_price_panel_ignores_prior_limit_schema_cache(monkeypatch, tmp_path
             "instrument": ["000001.SZ"],
         }
     )
-    config = ResearchConfig(adjustment={"mode": "none"}, benchmark={"instrument": ""})
+    config = research_config(adjustment={"mode": "none"}, benchmark={"instrument": ""})
     start, end = derive_panel_range(events, config)
     universe = hashlib.sha1(b"000001.SZ").hexdigest()[:12]
     stale_path = tmp_path / f"pit_raw_v1_none_{start.isoformat()}_{end.isoformat()}_{universe}.parquet"

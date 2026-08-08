@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-HOOK = Path(__file__).resolve().parents[1] / ".cursor" / "hooks" / "protect_events.py"
+HOOK = Path(__file__).resolve().parents[1] / ".codex" / "hooks" / "protect_events.py"
 
 
 def _load():
@@ -30,8 +30,8 @@ def test_protected_path_detection(pe):
     assert not pe._is_protected_path("configs/examples/x.yaml")
 
 
-def test_shell_allows_qr_csv_read(pe):
-    cmd = 'qr factor compare --csv workspace/events_ascii/plat_2019.csv --format json --quiet'
+def test_shell_allows_read_only_event_inspection(pe):
+    cmd = 'Get-Content workspace/events_ascii/plat_2019.csv | Measure-Object'
     assert pe._shell_touches_protected_write(cmd) is False
 
 
@@ -60,11 +60,11 @@ def test_main_write_tool_deny(pe, capsys, monkeypatch):
     assert out["permission"] == "deny"
 
 
-def test_main_shell_qr_allow(pe, capsys, monkeypatch):
+def test_main_shell_read_only_allow(pe, capsys, monkeypatch):
     import io
 
     payload = {
-        "command": "qr data validate-events --csv workspace/events/plat_2019.csv --format json --quiet"
+        "command": "Get-Content workspace/events/plat_2019.csv | Measure-Object"
     }
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
     assert pe.main() == 0

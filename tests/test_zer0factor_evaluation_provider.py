@@ -12,7 +12,7 @@ import pytest
 
 import qresearch.research.providers.zer0factor_evaluation as evaluation_provider
 from qresearch.config.models import ResearchConfig
-from qresearch.research.domain import FeatureSnapshot, ResearchDataset
+from qresearch.research.domain import FeatureSnapshot, ResearchDataset, sha256_path
 from qresearch.research.providers.market import ResearchDataError
 from qresearch.research.providers.zer0factor import _snapshot_hash
 from qresearch.research.providers.zer0factor import Zer0FactorDependencyError
@@ -108,6 +108,31 @@ def test_frozen_snapshot_storage_rejects_frame_changed_after_hashing() -> None:
         FrozenSnapshotStorage(snapshot)
 
 
+def test_frozen_snapshot_storage_accepts_and_verifies_persisted_parquet_hash(
+    tmp_path: Path,
+) -> None:
+    # Screening evidence must identify the exact persisted bytes, not the provider's in-memory ID.
+    snapshot = _snapshot()
+    snapshot_path = tmp_path / "feature_snapshot.parquet"
+    snapshot.frame.write_parquet(snapshot_path)
+    persisted_sha = sha256_path(snapshot_path)
+    persisted = FeatureSnapshot(
+        frame=snapshot.frame,
+        manifest={
+            "zer0factor_repo_revision": "zer0factor-revision",
+            "feature_snapshot_path": str(snapshot_path),
+            "feature_snapshot_hash": persisted_sha,
+            "meta": {"feature_snapshot_hash": persisted_sha},
+        },
+    )
+
+    assert FrozenSnapshotStorage(persisted).read("alpha").shape == (3, 3)
+
+    snapshot_path.write_bytes(b"changed-after-materialize")
+    with pytest.raises(ResearchDataError, match="hash"):
+        FrozenSnapshotStorage(persisted)
+
+
 class RecordingPro:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, object]]] = []
@@ -180,8 +205,8 @@ def test_train_universe_uses_frozen_train_membership_and_delegates_market_querie
     assert [name for name, _ in pro.calls] == ["pro_bar", "index_daily"]
 
 
-def _screening_dataset() -> ResearchDataset:
-    snapshot_hash = _screening_snapshot_hash()
+def _screening_dataset(snapshot_hash: str | None = None) -> ResearchDataset:
+    snapshot_hash = snapshot_hash or _screening_snapshot_hash()
     return ResearchDataset(
         frame=pl.DataFrame(
             {
@@ -215,25 +240,36 @@ def _screening_dataset() -> ResearchDataset:
     )
 
 
-def _screening_snapshot() -> FeatureSnapshot:
+def _screening_snapshot(snapshot_path: Path | None = None) -> FeatureSnapshot:
     dataset = _screening_dataset()
     base_manifest = {"zer0factor_repo_revision": "zer0factor-revision"}
-    digest = _screening_snapshot_hash()
+    frame = dataset.frame.select(
+        "sample_id",
+        "instrument",
+        "asof_session",
+        "effective_session",
+        "features.alpha",
+        "features.beta",
+    )
+    if snapshot_path is None:
+        digest = _screening_snapshot_hash()
+    else:
+        frame.write_parquet(snapshot_path)
+        digest = sha256_path(snapshot_path)
+        base_manifest["feature_snapshot_path"] = str(snapshot_path)
     return FeatureSnapshot(
-        frame=dataset.frame.select(
-            "sample_id",
-            "instrument",
-            "asof_session",
-            "effective_session",
-            "features.alpha",
-            "features.beta",
-        ),
+        frame=frame,
         manifest={
             **base_manifest,
             "feature_snapshot_hash": digest,
             "meta": {"feature_snapshot_hash": digest},
         },
     )
+
+
+def _persisted_screening_inputs(tmp_path: Path) -> tuple[ResearchDataset, FeatureSnapshot]:
+    snapshot = _screening_snapshot(tmp_path / "feature_snapshot.parquet")
+    return _screening_dataset(str(snapshot.manifest["feature_snapshot_hash"])), snapshot
 
 
 def _screening_snapshot_hash() -> str:
@@ -395,10 +431,11 @@ def test_run_factor_screening_uses_public_service_and_audits_train_artifacts(
 
     monkeypatch.setattr(EvaluationService, "from_dependencies", classmethod(fake_from_dependencies))
     output_dir = tmp_path / "artifacts"
+    dataset, snapshot = _persisted_screening_inputs(tmp_path)
 
     result = run_factor_screening(
-        _screening_dataset(),
-        _screening_snapshot(),
+        dataset,
+        snapshot,
         _screening_config(),
         RecordingPro(),
         output_dir,
@@ -427,7 +464,9 @@ def test_run_factor_screening_uses_public_service_and_audits_train_artifacts(
     assert result.manifest["evidence_role"] == "train_screening"
     assert result.manifest["oos"] is False
     assert result.manifest["promotable"] is False
-    assert result.manifest["feature_snapshot_sha256"] == _screening_snapshot_hash()
+    assert result.manifest["feature_snapshot_sha256"] == snapshot.manifest[
+        "feature_snapshot_hash"
+    ]
     assert result.manifest["zer0factor_revision"] == "zer0factor-revision"
     assert result.manifest["excluded_rows"] == {
         "validate": 1,
@@ -467,11 +506,12 @@ def test_run_factor_screening_rejects_missing_upstream_artifacts(
         "from_dependencies",
         classmethod(lambda cls, storage, pro: FakeService()),
     )
+    dataset, snapshot = _persisted_screening_inputs(tmp_path)
 
     with pytest.raises(ResearchDataError, match=message):
         run_factor_screening(
-            _screening_dataset(),
-            _screening_snapshot(),
+            dataset,
+            snapshot,
             _screening_config(),
             RecordingPro(),
             tmp_path / "artifacts",
@@ -497,11 +537,12 @@ def test_run_factor_screening_rejects_clean_rows_outside_train_membership(
         "from_dependencies",
         classmethod(lambda cls, storage, pro: FakeService()),
     )
+    dataset, snapshot = _persisted_screening_inputs(tmp_path)
 
     with pytest.raises(ResearchDataError, match="train membership"):
         run_factor_screening(
-            _screening_dataset(),
-            _screening_snapshot(),
+            dataset,
+            snapshot,
             _screening_config(),
             RecordingPro(),
             tmp_path / "artifacts",
@@ -518,15 +559,31 @@ def test_run_factor_screening_maps_unavailable_public_service_to_dependency_erro
         "qresearch.research.providers.zer0factor_evaluation.get_settings",
         lambda: SimpleNamespace(zer0factor_root=str(tmp_path / "missing-zer0factor")),
     )
+    dataset, snapshot = _persisted_screening_inputs(tmp_path)
 
     with pytest.raises(Zer0FactorDependencyError, match="zer0factor root"):
+        run_factor_screening(
+            dataset,
+            snapshot,
+            _screening_config(),
+            RecordingPro(),
+            tmp_path / "artifacts",
+            "dependency-missing",
+        )
+
+
+def test_run_factor_screening_rejects_unpersisted_snapshot_before_evaluation(
+    tmp_path: Path,
+) -> None:
+    # The provider's in-memory content ID is not final evidence for a screening run.
+    with pytest.raises(ResearchDataError, match="persisted"):
         run_factor_screening(
             _screening_dataset(),
             _screening_snapshot(),
             _screening_config(),
             RecordingPro(),
             tmp_path / "artifacts",
-            "dependency-missing",
+            "unpersisted-snapshot",
         )
 
 
@@ -552,11 +609,12 @@ def test_run_factor_screening_rejects_evaluator_revision_mismatch(
         "from_dependencies",
         classmethod(lambda cls, storage, pro: FakeService()),
     )
+    dataset, snapshot = _persisted_screening_inputs(tmp_path)
 
     with pytest.raises(ResearchDataError, match="revision"):
         run_factor_screening(
-            _screening_dataset(),
-            _screening_snapshot(),
+            dataset,
+            snapshot,
             _screening_config(),
             RecordingPro(),
             tmp_path / "artifacts",
@@ -583,11 +641,12 @@ def test_run_factor_screening_rejects_public_modules_outside_configured_root(
         "from_dependencies",
         classmethod(lambda cls, storage, pro: FakeService()),
     )
+    dataset, snapshot = _persisted_screening_inputs(tmp_path)
 
     with pytest.raises(Zer0FactorDependencyError, match="configured root"):
         run_factor_screening(
-            _screening_dataset(),
-            _screening_snapshot(),
+            dataset,
+            snapshot,
             _screening_config(),
             RecordingPro(),
             tmp_path / "artifacts",

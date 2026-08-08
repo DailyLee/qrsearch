@@ -50,7 +50,7 @@ def _write_template(path: Path, *, with_signals: bool = False, with_eval: bool =
 def test_scaffold_clears_signals_and_sets_study_id(tmp_path: Path):
     examples = tmp_path / "configs" / "examples"
     experiments = tmp_path / "configs" / "experiments"
-    tmpl = examples / "event_factors.yaml"
+    tmpl = examples / "market_factors.yaml"
     _write_template(tmpl, with_signals=True)
     out = experiments / "plat_v1.yaml"
     result = scaffold_experiment_yaml(
@@ -178,7 +178,7 @@ def test_cli_config_new_smoke(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     root = tmp_path
     examples = root / "configs" / "examples"
     experiments = root / "configs" / "experiments"
-    tmpl = examples / "event_factors.yaml"
+    tmpl = examples / "market_factors.yaml"
     _write_template(tmpl, with_signals=True)
     monkeypatch.chdir(root)
     out = "configs/experiments/cli_v1.yaml"

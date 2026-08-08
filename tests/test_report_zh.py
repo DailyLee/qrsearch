@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from conftest import research_config
+
 import json
 from pathlib import Path
 
@@ -55,7 +57,7 @@ def test_summarize_trades_and_chinese_html(tmp_path: Path):
     assert stats["n_sells"] == 2
     assert 0 < stats["win_rate"] < 1
 
-    cfg = ResearchConfig()
+    cfg = research_config()
     gates = evaluate_gates(
         {"n_trades": 20, "sharpe": 1.0, "max_dd": -0.1}, cfg.gates, n_oos_folds=2
     )

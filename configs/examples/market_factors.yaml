@@ -1,0 +1,43 @@
+# Market-research skeleton only. Create a real experiment with `qr config new`
+# and fill universe, dates, zer0factor refs, and temporal roles there.
+sample:
+  universe: ""
+  start_date: null
+  end_date: null
+
+features:
+  provider: zer0factor
+  refs: []
+  analysis_family: null
+
+label:
+  entry_price: open
+  entry_lag_sessions: 1
+  horizon_sessions: 5
+  exit_price: open
+
+evaluation:
+  primary_metric: absolute
+  train_years: []
+  validate_years: []
+  holdouts: []
+  statement_hint: ""
+
+benchmark:
+  instrument: "000852.SH"
+
+hypothesis:
+  id: null
+  statement: null
+  expected_sign: {}
+  study_id: null
+
+# Intentionally empty until Iteration 3 strategy design.
+signals:
+  filters: []
+  rank_by: []
+  composite:
+    enabled: false
+    components: []
+
+ic_horizons: [1, 5, 10, 20]

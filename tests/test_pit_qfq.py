@@ -14,7 +14,8 @@ from qresearch.config.models import (
 )
 from qresearch.engines.analysis.pit_audit import run_pit_audit
 from qresearch.engines.data.panel import PricePanel
-from qresearch.engines.factor.ic import _fwd_return
+from qresearch.research.domain import SampleSet
+from qresearch.research.labels import materialize_labels
 
 
 def _sessions(n: int = 6) -> list[date]:
@@ -86,7 +87,7 @@ def test_qfq_asof_session_does_not_use_future_factor():
     assert abs(float(b_pit["close"]) - window_end) > 0.5
 
 
-def test_fwd_return_uses_horizon_end_asof_not_panel_end():
+def test_market_label_uses_horizon_end_asof_not_panel_end():
     sessions = _sessions(6)
     rows = []
     # flat raw 10; factor doubles at sessions[4] (after a 2-day horizon from sessions[1])
@@ -116,10 +117,33 @@ def test_fwd_return_uses_horizon_end_asof_not_panel_end():
         adj_mode="qfq",
     )
     panel.build_index()
-    # entry sessions[1], horizon 2 → end sessions[3]; both asof end, adj=1 → ret=0
-    ret = _fwd_return(panel, "AAA001.SZ", sessions[1], 2)
-    assert ret is not None
-    assert abs(ret) < 1e-9
+    samples = SampleSet(
+        frame=pl.DataFrame(
+            {
+                "sample_id": ["market-label"],
+                "instrument": ["AAA001.SZ"],
+                "asof_session": [sessions[0]],
+                "effective_session": [sessions[1]],
+                "sample_weight": [1.0],
+            }
+        ).with_columns(pl.col("asof_session", "effective_session").cast(pl.Date)),
+        manifest={},
+    )
+    labels = materialize_labels(
+        samples,
+        panel,
+        _research_config().label.model_copy(
+            update={"entry_lag_sessions": 1, "horizon_sessions": 2}
+        ),
+    )
+
+    assert labels.frame.select("label_start", "label_end", "forward_return").to_dicts() == [
+        {
+            "label_start": sessions[1],
+            "label_end": sessions[3],
+            "forward_return": 0.0,
+        }
+    ]
 
 
 def test_pit_audit_reports_session_pit():

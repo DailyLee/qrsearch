@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from conftest import research_config
+
 from datetime import date, timedelta
 
 import polars as pl
@@ -33,16 +35,16 @@ def test_threshold_high_low_keep_frac():
 
 
 def test_resolve_side_from_expected_sign_and_rank():
-    cfg = ResearchConfig(
+    cfg = research_config(
         hypothesis=HypothesisConfig(expected_sign={"features.pre_r1": "negative"})
     )
     assert resolve_side(cfg, "features.pre_r1", "auto") == "low"
-    cfg2 = ResearchConfig(
+    cfg2 = research_config(
         signals=SignalsConfig(rank_by=[RankBy(field="features.box_quality", ascending=False)])
     )
     assert resolve_side(cfg2, "features.box_quality", "auto") == "high"
     with pytest.raises(OptimizeError, match="cannot resolve side"):
-        resolve_side(ResearchConfig(), "features.pre_r1", "auto")
+        resolve_side(research_config(), "features.pre_r1", "auto")
 
 
 def test_replace_feature_filter_preserves_others():
@@ -120,7 +122,7 @@ def _tiny_panel_events():
 
 def test_search_low_side_uses_le_and_keeps_other_filters(monkeypatch: pytest.MonkeyPatch):
     panel, events = _tiny_panel_events()
-    cfg = ResearchConfig(
+    cfg = research_config(
         hypothesis=HypothesisConfig(expected_sign={"features.pre_r1": "negative"}),
         signals=SignalsConfig(
             filters=[FilterRule(field="features.box_quality", op="ge", value=0.9)],
@@ -159,7 +161,7 @@ def test_search_low_side_uses_le_and_keeps_other_filters(monkeypatch: pytest.Mon
 
 def test_search_high_side_uses_ge(monkeypatch: pytest.MonkeyPatch):
     panel, events = _tiny_panel_events()
-    cfg = ResearchConfig(
+    cfg = research_config(
         hypothesis=HypothesisConfig(expected_sign={"features.box_quality": "positive"}),
     )
     n = {"i": 0}

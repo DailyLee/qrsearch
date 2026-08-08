@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from conftest import research_config
+
 from datetime import date
 
 import polars as pl
@@ -37,7 +39,7 @@ def test_entry_filter_min_max_bounds(panel: PricePanel, sessions):
     session = sessions[2]
     ref = panel.prior_close("AAA001.SZ", decision)
     assert ref is not None
-    cfg = ResearchConfig(
+    cfg = research_config(
         execution=ExecutionConfig(
             price="open",
             entry_filter=EntryFilterConfig(
@@ -66,7 +68,7 @@ def test_entry_filter_empty_bar_and_data_gap(panel: PricePanel, events: pl.DataF
     """Missing panel bar → data_gap reject; empty open → missing_entry_price."""
     decision = sessions[2]
     session = sessions[2]
-    cfg = ResearchConfig(
+    cfg = research_config(
         execution=ExecutionConfig(
             price="open",
             entry_filter=EntryFilterConfig(
@@ -96,7 +98,7 @@ def test_entry_filter_empty_bar_and_data_gap(panel: PricePanel, events: pl.DataF
 def test_lag_sessions_delays_first_buy(panel: PricePanel, events: pl.DataFrame, sessions):
     ev = events.head(1)
     entry = sessions[1]
-    cfg = ResearchConfig(
+    cfg = research_config(
         portfolio=PortfolioConfig(starting_cash=100_000, max_weight=0.8, max_new_entries_per_day=1),
         execution=ExecutionConfig(order_validity_sessions=5, lag_sessions=1),
         risk=RiskConfig(stop_loss=None, take_profit=None),
@@ -110,7 +112,7 @@ def test_lag_sessions_delays_first_buy(panel: PricePanel, events: pl.DataFrame, 
 
 def test_max_hold_exit(panel: PricePanel, events: pl.DataFrame, sessions):
     ev = events.head(1).with_columns(pl.lit(sessions[20]).alias("exit_intent_date"))
-    cfg = ResearchConfig(
+    cfg = research_config(
         portfolio=PortfolioConfig(starting_cash=100_000, max_weight=0.8, max_new_entries_per_day=1),
         execution=ExecutionConfig(order_validity_sessions=1),
         risk=RiskConfig(stop_loss=None, take_profit=None, max_hold_sessions=3),
@@ -123,7 +125,7 @@ def test_max_hold_exit(panel: PricePanel, events: pl.DataFrame, sessions):
 
 def test_sell_blocked_limit_down_sets_pending(panel: PricePanel, events: pl.DataFrame, sessions):
     ev = events.head(1)
-    cfg = ResearchConfig(
+    cfg = research_config(
         portfolio=PortfolioConfig(starting_cash=100_000, max_weight=0.8, max_new_entries_per_day=1),
         execution=ExecutionConfig(order_validity_sessions=1),
         risk=RiskConfig(stop_loss=None, take_profit=None),
@@ -166,7 +168,7 @@ def test_events_to_intents_maps_features(events: pl.DataFrame):
 
 def test_buy_uses_close_when_execution_price_close(panel: PricePanel, events: pl.DataFrame, sessions):
     ev = events.head(1)
-    cfg = ResearchConfig(
+    cfg = research_config(
         portfolio=PortfolioConfig(starting_cash=100_000, max_weight=0.8, max_new_entries_per_day=1),
         execution=ExecutionConfig(price="close", order_validity_sessions=1),
         risk=RiskConfig(stop_loss=None, take_profit=None),
@@ -186,7 +188,7 @@ def test_buy_uses_close_when_execution_price_close(panel: PricePanel, events: pl
 
 def test_take_profit_fill_price(panel: PricePanel, events: pl.DataFrame, sessions):
     ev = events.head(1).with_columns(pl.lit(sessions[20]).alias("exit_intent_date"))
-    cfg = ResearchConfig(
+    cfg = research_config(
         portfolio=PortfolioConfig(starting_cash=100_000, max_weight=0.8, max_new_entries_per_day=1),
         execution=ExecutionConfig(order_validity_sessions=1, price="open"),
         risk=RiskConfig(stop_loss=None, take_profit=0.02),
@@ -217,7 +219,7 @@ def test_take_profit_fill_price(panel: PricePanel, events: pl.DataFrame, session
 
 def test_insufficient_cash_or_lot_reject(panel: PricePanel, events: pl.DataFrame, sessions):
     ev = events.head(1)
-    cfg = ResearchConfig(
+    cfg = research_config(
         portfolio=PortfolioConfig(
             starting_cash=50.0,  # less than 1 lot * ~10
             max_weight=1.0,
@@ -245,7 +247,7 @@ def test_entry_filter_rejects_then_retries(panel: PricePanel, events: pl.DataFra
     bar1["low"] = min(bar1["low"], bar1["open"])
     panel._by_key[("AAA001.SZ", entry)] = bar1
 
-    cfg = ResearchConfig(
+    cfg = research_config(
         portfolio=PortfolioConfig(starting_cash=100_000, max_weight=0.8, max_new_entries_per_day=1),
         execution=ExecutionConfig(
             order_validity_sessions=5,
@@ -269,7 +271,7 @@ def test_data_gap_on_entry_retries(panel: PricePanel, events: pl.DataFrame, sess
     ev = events.head(1)
     entry = sessions[1]
     del panel._by_key[("AAA001.SZ", entry)]
-    cfg = ResearchConfig(
+    cfg = research_config(
         portfolio=PortfolioConfig(starting_cash=100_000, max_weight=0.8, max_new_entries_per_day=1),
         execution=ExecutionConfig(order_validity_sessions=5),
         risk=RiskConfig(stop_loss=None, take_profit=None),
@@ -284,7 +286,7 @@ def test_data_gap_on_entry_retries(panel: PricePanel, events: pl.DataFrame, sess
 def test_deferred_exit_fills_after_limit_down_block(panel: PricePanel, events: pl.DataFrame, sessions):
     """Stop triggers but limit-down blocks sell; next day deferred_exit path fills."""
     ev = events.head(1).with_columns(pl.lit(sessions[25]).alias("exit_intent_date"))
-    cfg = ResearchConfig(
+    cfg = research_config(
         portfolio=PortfolioConfig(starting_cash=100_000, max_weight=0.8, max_new_entries_per_day=1),
         execution=ExecutionConfig(order_validity_sessions=1, price="open"),
         risk=RiskConfig(stop_loss=-0.02, take_profit=None),

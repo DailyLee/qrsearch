@@ -4,20 +4,21 @@ import json
 from datetime import date
 
 import polars as pl
-import pytest
 
 from qresearch.config.models import (
     EntryFilterConfig,
     ExecutionConfig,
+    FeatureRefConfig,
+    FeatureSourceConfig,
     FilterRule,
     PortfolioConfig,
     ResearchConfig,
     RiskConfig,
+    SampleConfig,
     SignalsConfig,
 )
 from qresearch.engines.backtest.session import run_backtest
 from qresearch.engines.backtest.sizing import allocate_shares
-from qresearch.engines.data.ingest import IngestError, to_ts_code
 from qresearch.engines.data.limitbook import LimitBook
 from qresearch.engines.data.panel import PricePanel
 from qresearch.engines.risk.pretrade import Intent, select_buy_intents
@@ -25,15 +26,22 @@ from qresearch.engines.risk.state import PortfolioState, Position
 from qresearch.io.envelope import ExitCode, ResultEnvelope, emit
 
 
-def test_to_ts_code():
-    assert to_ts_code("sz.000001") == "000001.SZ"
-    assert to_ts_code("sh.600000") == "600000.SH"
-    with pytest.raises(IngestError):
-        to_ts_code("bad")
+def _research_config(**updates: object) -> ResearchConfig:
+    return ResearchConfig(
+        sample=SampleConfig(
+            universe="synthetic",
+            start_date=date(2024, 1, 1),
+            end_date=date(2024, 12, 31),
+        ),
+        features=FeatureSourceConfig(
+            refs=[FeatureRefConfig(name="synthetic", availability_lag_sessions=0)]
+        ),
+        **updates,
+    )
 
 
 def test_cor_gfd_validity_one(panel: PricePanel, events: pl.DataFrame, sessions):
-    cfg = ResearchConfig(
+    cfg = _research_config(
         portfolio=PortfolioConfig(starting_cash=100_000, max_weight=0.5, max_new_entries_per_day=2),
         execution=ExecutionConfig(order_validity_sessions=1),
         risk=RiskConfig(stop_loss=None, take_profit=None),
@@ -51,7 +59,7 @@ def test_cor_gfd_validity_one(panel: PricePanel, events: pl.DataFrame, sessions)
 
 
 def test_cor_gtd_and_decision_prior_close(panel: PricePanel, events: pl.DataFrame, sessions):
-    cfg = ResearchConfig(
+    cfg = _research_config(
         portfolio=PortfolioConfig(starting_cash=100_000, max_weight=0.5, max_new_entries_per_day=2),
         execution=ExecutionConfig(
             order_validity_sessions=5,
@@ -95,7 +103,7 @@ def test_cor_t1(panel: PricePanel, events: pl.DataFrame, sessions):
     ev = events.head(1).with_columns(
         pl.lit(sessions[1]).alias("exit_intent_date"),
     )
-    cfg = ResearchConfig(
+    cfg = _research_config(
         portfolio=PortfolioConfig(starting_cash=100_000, max_weight=0.8, max_new_entries_per_day=1),
         execution=ExecutionConfig(order_validity_sessions=1),
         risk=RiskConfig(stop_loss=-0.9, take_profit=None),  # huge stop unlikely same open
@@ -170,7 +178,7 @@ def test_agt_envelope_json_loads(capsys):
 def test_exit_priority_stop_before_tp(panel: PricePanel, events: pl.DataFrame, sessions):
     # hold one name, craft bar that hits both stop and tp
     ev = events.head(1)
-    cfg = ResearchConfig(
+    cfg = _research_config(
         portfolio=PortfolioConfig(starting_cash=100_000, max_weight=0.8, max_new_entries_per_day=1),
         execution=ExecutionConfig(order_validity_sessions=1),
         risk=RiskConfig(stop_loss=-0.02, take_profit=0.02),
