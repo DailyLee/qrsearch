@@ -103,7 +103,7 @@ evaluation:
 ## A. 回测 research
 
 ```bash
-qr pipeline research --csv <train_csvs...> --config configs/experiments/<file>.yaml \
+qr pipeline research --config configs/experiments/<file>.yaml \
   --n-trials-assumed <N> --format json --quiet
 
 qr analyze trades --run <run_id> --format json --quiet

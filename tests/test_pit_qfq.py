@@ -10,6 +10,7 @@ from qresearch.config.models import (
     FeatureRefConfig,
     FeatureSourceConfig,
     ResearchConfig,
+    RiskConfig,
     SampleConfig,
 )
 from qresearch.engines.analysis.pit_audit import run_pit_audit
@@ -35,6 +36,7 @@ def _research_config() -> ResearchConfig:
         features=FeatureSourceConfig(
             refs=[FeatureRefConfig(name="momentum", availability_lag_sessions=0)]
         ),
+        risk=RiskConfig(max_hold_sessions=100),
     )
 
 

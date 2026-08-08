@@ -1,4 +1,4 @@
-# qresearch Iteration 2 CLI reference
+# qresearch Iteration 3 CLI reference
 
 This reference describes the active market-factor surface. Event/CSV, local factor analysis, strategy,
 optimization, backtest, rolling validation, and ops commands are not available in Iteration 2.
@@ -26,6 +26,10 @@ qr data ping --format json --quiet
 qr research factors --format json --quiet
 qr research materialize --config <experiment.yaml> [--run-id <id>] --format json --quiet
 qr research evaluate --config <experiment.yaml> [--run-id <id>] --format json --quiet
+qr pipeline research --config <experiment.yaml> [--run-id <id>] --format json --quiet
+qr pipeline optimize --config <experiment.yaml> ... --format json --quiet
+qr pipeline sweep --config <experiment.yaml> --set <spec> --format json --quiet
+qr pipeline sensitivity --config <experiment.yaml> ... --format json --quiet
 ```
 
 - `research factors` calls `FactorStorage.list_factors()`, returns sorted readable names, does not

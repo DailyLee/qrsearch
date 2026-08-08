@@ -40,4 +40,9 @@ signals:
     enabled: false
     components: []
 
+# Required fixed holding period for market backtests; choose in the experiment.
+risk:
+  max_hold_sessions: 5
+  exit_priority: [stop, take_profit, max_hold, exit_intent, deferred_exit]
+
 ic_horizons: [1, 5, 10, 20]

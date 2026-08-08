@@ -204,6 +204,19 @@ footer {
     </div>
   </header>
 
+  {% if market_lineage.sample_kind == 'market' %}
+  <section>
+    <h2>市场样本与数据血缘</h2>
+    <div class="kv">
+      <div class="k">样本 / Universe</div><div>{{ market_lineage.sample_kind }} / <code>{{ market_lineage.universe }}</code></div>
+      <div class="k">特征快照 SHA-256</div><div class="mono">{{ market_lineage.feature_snapshot_sha256 }}</div>
+      <div class="k">zer0share 指纹</div><div class="mono">{{ market_lineage.zer0share_fingerprint }}</div>
+      <div class="k">zer0factor revision</div><div class="mono">{{ market_lineage.zer0factor_revision }}</div>
+      <div class="k">成交模型</div><div>{{ market_lineage.execution_model }}</div>
+    </div>
+  </section>
+  {% endif %}
+
   <section>
     <h2>0. 决策存档</h2>
     {% if decisions %}

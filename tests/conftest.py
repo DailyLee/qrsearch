@@ -30,6 +30,7 @@ def _sessions(n: int = 40, start: date = date(2024, 1, 2)) -> list[date]:
 
 def research_config(**updates: object) -> ResearchConfig:
     """Complete market config for tests of lower-level iteration-1 engines."""
+    updates.setdefault("risk", RiskConfig(max_hold_sessions=100))
     return ResearchConfig(
         sample=SampleConfig(
             universe="synthetic",
@@ -100,7 +101,7 @@ def base_config() -> ResearchConfig:
             order_validity_sessions=5,
             entry_filter=EntryFilterConfig(enabled=False),
         ),
-        risk=RiskConfig(stop_loss=-0.5, take_profit=0.5, max_hold_sessions=None),
+        risk=RiskConfig(stop_loss=-0.5, take_profit=0.5, max_hold_sessions=5),
     )
 
 

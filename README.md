@@ -2,10 +2,9 @@
 
 Market-universe A-share research kernel and agent-friendly CLI.
 
-Iteration 2 materializes point-in-time market samples from zer0share, freezes already-materialized
-zer0factor values into a run, builds fixed-horizon labels, assigns explicit temporal roles, and delegates
-train-only factor screening to zer0factor's public `EvaluationService`. It does not expose strategy,
-optimization, backtest, event, or CSV commands.
+Iteration 3 adds market-only strategy research on the frozen dataset: observations are adapted to the
+existing daily signal and backtest engines without querying zer0factor again. Event and CSV inputs remain
+unsupported.
 
 ## Install
 
@@ -47,6 +46,7 @@ qr config new \
 
 qr research materialize --config configs/experiments/<study>.yaml --format json --quiet
 qr research evaluate --config configs/experiments/<study>.yaml --run-id <materialize_run_id> --format json --quiet
+qr pipeline research --config configs/experiments/<study>.yaml --format json --quiet
 ```
 
 `research factors` only lists readable registry names. It does not read factor values, calculate
@@ -94,9 +94,9 @@ qr study decision ...
 qr study list ...
 ```
 
-The CLI also retains read-only run/report utilities from existing completed runs. The event/factor
-comparison, strategy, optimization, rolling validation, backtest, and ops entry points are unavailable
-until Iteration 3 rebuilds them on the frozen market dataset.
+`pipeline research` materializes one run, rereads its frozen `dataset.parquet`, maps observations to the
+existing signal schema, and runs the existing daily backtest. Set `risk.max_hold_sessions` explicitly;
+rows without a calendar exit are omitted rather than assigned a guessed holding period.
 
 JSON envelopes include `schema_version`, `run_id`, `summary`, `artifacts`, `next_actions`, and
 `error`. Exit codes are `0` success, `2` configuration, `3` market/factor coverage or artifact

@@ -928,6 +928,14 @@ def build_conclusion_from_run(
         "behavior_subset": existing.get("behavior_subset") or [],
         "decisions": loaded.get("decisions") or existing.get("decisions") or [],
         "hypothesis": existing.get("hypothesis") or cfg.get("hypothesis") or {},
+        "market_lineage": {
+            "sample_kind": meta.get("sample_kind"),
+            "universe": meta.get("universe"),
+            "feature_snapshot_sha256": meta.get("feature_snapshot_sha256"),
+            "zer0share_fingerprint": meta.get("zer0share_fingerprint"),
+            "zer0factor_revision": meta.get("zer0factor_revision"),
+            "execution_model": meta.get("execution_model"),
+        },
     }
     from qresearch.config import get_settings
     from qresearch.engines.analysis.split_comparison import build_split_comparison
@@ -1008,6 +1016,7 @@ def render_html(conclusion: dict[str, Any]) -> str:
         decisions=conclusion.get("decisions") or [],
         artifact_links=conclusion.get("artifact_links") or {},
         split_comparison=conclusion.get("split_comparison"),
+        market_lineage=conclusion.get("market_lineage") or {},
     )
 
 

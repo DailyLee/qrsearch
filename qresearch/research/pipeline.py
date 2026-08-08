@@ -15,7 +15,12 @@ from pydantic import ValidationError
 from qresearch.config import get_settings, load_research_config
 from qresearch.config.models import ResearchConfig
 from qresearch.engines.data.vendor import VendorError, get_local_pro, load_trade_calendar
+from qresearch.engines.data.panel import load_price_panel
+from qresearch.engines.backtest.session import run_backtest
+from qresearch.engines.analysis.invested import mean_invested_from_equity
+from qresearch.engines.analysis.overfit import attach_overfit_metrics
 from qresearch.engines.experiment.registry import RunWriter
+from qresearch.engines.signal.engine import build_ranked
 from qresearch.research.dataset import build_research_dataset
 from qresearch.research.domain import (
     FeatureSnapshot,
@@ -32,6 +37,7 @@ from qresearch.research.providers.zer0factor import (
 )
 from qresearch.research.providers.zer0factor_evaluation import run_factor_screening
 from qresearch.research.splits import assign_temporal_roles
+from qresearch.research.strategy import build_market_signal_frame
 
 
 class ResearchConfigurationError(ValueError):
@@ -354,6 +360,86 @@ def evaluate_research(
             "screening_run_id": screening.run_dir.name,
             "screening_summary": screening.summary.to_dicts(),
             "screening_report": report_path,
+        },
+        "artifacts": artifacts,
+    }
+
+
+def run_research_strategy(
+    config_path: str | Path,
+    run_id: str | None = None,
+    n_trials_assumed: int | None = None,
+) -> dict[str, object]:
+    """Run signals and the daily backtest from one newly frozen market dataset."""
+    config = _load_config(config_path)
+    materialized = materialize_research(config_path, run_id=run_id)
+    resolved_run_id = str(materialized["run_id"])
+    settings = get_settings()
+    run_dir = Path(settings.runs_dir) / resolved_run_id
+    snapshot, dataset, artifacts = _load_frozen_run(run_dir)
+
+    calendar = _calendar_for(config)
+    signal_frame = build_market_signal_frame(dataset, config, calendar)
+    ranked = build_ranked(signal_frame, config)
+    panel = load_price_panel(
+        ranked,
+        config,
+        cache_dir=Path(settings.cache_dir) / "prices",
+    )
+    backtest = run_backtest(ranked, panel, config)
+    assumed_trials = n_trials_assumed or config.gates.n_trials_assumed
+    metrics = attach_overfit_metrics(backtest.metrics, n_trials=assumed_trials)
+    metrics.update(mean_invested_from_equity(backtest.equity))
+
+    artifact_dir = run_dir / "artifacts"
+    ranked_path = artifact_dir / "ranked_signals.parquet"
+    equity_path = artifact_dir / "equity.csv"
+    trades_path = artifact_dir / "trades.csv"
+    metrics_path = artifact_dir / "metrics.json"
+    rejects_path = artifact_dir / "rejects_summary.json"
+    ranked.write_parquet(ranked_path)
+    pl.DataFrame(backtest.equity).write_csv(equity_path)
+    pl.DataFrame(backtest.trades).write_csv(trades_path)
+    _write_json(metrics_path, metrics)
+    _write_json(rejects_path, backtest.rejects)
+    artifacts.update(
+        {
+            "ranked_signals": _resolved(ranked_path),
+            "equity": _resolved(equity_path),
+            "trades": _resolved(trades_path),
+            "metrics": _resolved(metrics_path),
+            "rejects_summary": _resolved(rejects_path),
+        }
+    )
+
+    meta_path = run_dir / "meta.json"
+    meta = _read_json_object(meta_path, "run meta") if meta_path.is_file() else {}
+    meta.update(
+        {
+            "command": "pipeline.research",
+            "status": "backtested",
+            "sample_kind": "market",
+            "universe": config.sample.universe,
+            "feature_snapshot_sha256": snapshot.manifest["feature_snapshot_hash"],
+            "label_spec": config.label.model_dump(mode="json"),
+            "split_summary": dataset.metadata.get("split_summary", {}),
+            "zer0share_fingerprint": dataset.metadata.get("input_hashes", {}).get("samples"),
+            "zer0factor_fingerprint": snapshot.manifest.get("zer0factor_data_fingerprint"),
+            "zer0factor_revision": snapshot.manifest.get("zer0factor_repo_revision"),
+            "n_trials_assumed": assumed_trials,
+            "execution_model": "daily_open_historical_limits",
+        }
+    )
+    _write_json(meta_path, meta)
+    artifacts["meta"] = _resolved(meta_path)
+    return {
+        "run_id": resolved_run_id,
+        "summary": {
+            "sample_kind": "market",
+            "universe": config.sample.universe,
+            "snapshot_sha256": snapshot.manifest["feature_snapshot_hash"],
+            "ranked_signals": ranked.height,
+            "metrics": metrics,
         },
         "artifacts": artifacts,
     }

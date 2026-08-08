@@ -14,6 +14,7 @@ from qresearch.config.models import (
     GatesConfig,
     HoldoutWindow,
     ResearchConfig,
+    RiskConfig,
     SampleConfig,
 )
 from qresearch.engines.analysis.evaluation_check import check_evaluation_years
@@ -32,6 +33,7 @@ from qresearch.engines.experiment.best_params import apply_best_to_yaml
 
 
 def _research_config(**updates: object) -> ResearchConfig:
+    updates.setdefault("risk", RiskConfig(max_hold_sessions=100))
     return ResearchConfig(
         sample=SampleConfig(
             universe="synthetic",

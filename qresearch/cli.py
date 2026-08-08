@@ -30,6 +30,12 @@ from qresearch.research.pipeline import (
     evaluate_research,
     materialize_research,
 )
+from qresearch.pipeline import (
+    pipeline_optimize,
+    pipeline_research,
+    pipeline_sensitivity,
+    pipeline_sweep,
+)
 from qresearch.research.providers.market import ResearchDataError
 from qresearch.research.providers.zer0factor import (
     ResearchFeatureError,
@@ -45,6 +51,7 @@ analyze_app = typer.Typer(no_args_is_help=True)
 runs_app = typer.Typer(no_args_is_help=True)
 study_app = typer.Typer(no_args_is_help=True)
 config_app = typer.Typer(no_args_is_help=True)
+pipeline_app = typer.Typer(no_args_is_help=True)
 
 app.add_typer(data_app, name="data")
 app.add_typer(research_app, name="research")
@@ -52,6 +59,7 @@ app.add_typer(analyze_app, name="analyze")
 app.add_typer(runs_app, name="runs")
 app.add_typer(study_app, name="study")
 app.add_typer(config_app, name="config")
+app.add_typer(pipeline_app, name="pipeline")
 
 # mutable CLI prefs; accept --format/--quiet anywhere in argv
 _CLI = {"format": "json", "quiet": False}
@@ -241,6 +249,44 @@ def research_evaluate(
     run_id: Optional[str] = typer.Option(None, "--run-id"),
 ) -> None:
     _run_research_command("research.evaluate", evaluate_research, config, run_id)
+
+
+@pipeline_app.command("research")
+def pipeline_research_cmd(
+    config: str = typer.Option(..., "--config"),
+    run_id: Optional[str] = typer.Option(None, "--run-id"),
+    n_trials_assumed: Optional[int] = typer.Option(None, "--n-trials-assumed"),
+) -> None:
+    started = utc_now_iso()
+    try:
+        result = pipeline_research(config, run_id=run_id, n_trials_assumed=n_trials_assumed)
+        _out(ResultEnvelope(command="pipeline.research", started_at=started, finished_at=utc_now_iso(), run_id=result["run_id"], summary=result["summary"], artifacts=result["artifacts"]))
+    except Exception as error:
+        _research_failure("pipeline.research", started, error)
+
+
+def _run_pipeline_command(command: str, operation, *args, **kwargs) -> None:
+    started = utc_now_iso()
+    try:
+        result = operation(*args, **kwargs)
+        _out(ResultEnvelope(command=command, started_at=started, finished_at=utc_now_iso(), run_id=result["run_id"], summary=result["summary"], artifacts=result["artifacts"]))
+    except Exception as error:
+        _research_failure(command, started, error)
+
+
+@pipeline_app.command("optimize")
+def pipeline_optimize_cmd(config: str = typer.Option(..., "--config"), feature: Optional[str] = typer.Option(None, "--feature"), side: str = typer.Option("auto", "--side"), keep_frac: str = typer.Option("0.1,0.2,0.3,0.4", "--keep-frac"), n_trials: Optional[int] = typer.Option(None, "--n-trials")) -> None:
+    _run_pipeline_command("pipeline.optimize", pipeline_optimize, config, feature=feature, side=side, keep_frac=keep_frac, n_trials=n_trials)
+
+
+@pipeline_app.command("sweep")
+def pipeline_sweep_cmd(config: str = typer.Option(..., "--config"), set_specs: list[str] = typer.Option(..., "--set"), metric: str = typer.Option("sharpe", "--metric"), max_grid: int = typer.Option(64, "--max-grid")) -> None:
+    _run_pipeline_command("pipeline.sweep", pipeline_sweep, config, set_specs=set_specs, metric=metric, max_grid=max_grid)
+
+
+@pipeline_app.command("sensitivity")
+def pipeline_sensitivity_cmd(config: str = typer.Option(..., "--config"), cost_mult: str = typer.Option("1,1.5,2", "--cost-mult"), stop: str = typer.Option("-0.05,-0.086,-0.12", "--stop"), take: str = typer.Option("0.10,0.158,0.20", "--take"), max_grid: int = typer.Option(64, "--max-grid")) -> None:
+    _run_pipeline_command("pipeline.sensitivity", pipeline_sensitivity, config, cost_mult=cost_mult, stop=stop, take=take, max_grid=max_grid)
 
 
 @analyze_app.command("trades")

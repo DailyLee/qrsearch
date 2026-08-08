@@ -18,6 +18,8 @@ def test_retained_cli_help_has_no_csv_options_and_removed_groups_are_absent() ->
         ["research", "factors"],
         ["research", "materialize"],
         ["research", "evaluate"],
+        ["pipeline"],
+        ["pipeline", "research"],
         ["config"],
         ["config", "new"],
         ["config", "apply-best"],
@@ -34,7 +36,7 @@ def test_retained_cli_help_has_no_csv_options_and_removed_groups_are_absent() ->
 
     top_help = runner.invoke(app, ["--help"])
     assert top_help.exit_code == 0
-    for removed in ("pipeline", "factor", "backtest", "validate", "ops"):
+    for removed in ("factor", "backtest", "validate", "ops"):
         assert removed not in top_help.output
     data_help = runner.invoke(app, ["data", "--help"])
     assert "validate-events" not in data_help.output

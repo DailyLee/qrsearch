@@ -10,6 +10,7 @@ from qresearch.config.models import (
     ExecutionConfig,
     LabelConfig,
     ResearchConfig,
+    RiskConfig,
     SampleConfig,
 )
 from qresearch.engines.data.panel import PricePanel
@@ -88,6 +89,7 @@ def _research() -> ResearchConfig:
         features=FeatureSourceConfig(
             refs=[FeatureRefConfig(name="momentum", availability_lag_sessions=0)]
         ),
+        risk=RiskConfig(max_hold_sessions=100),
     )
 
 
@@ -98,6 +100,7 @@ def _research_without_legacy_buffers() -> ResearchConfig:
             refs=[FeatureRefConfig(name="momentum", availability_lag_sessions=0)]
         ),
         execution=ExecutionConfig(order_validity_sessions=0),
+        risk=RiskConfig(max_hold_sessions=100),
         delay_buffer_sessions=0,
         suspend_buffer_sessions=0,
     )

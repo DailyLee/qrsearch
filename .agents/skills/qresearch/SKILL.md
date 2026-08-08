@@ -3,11 +3,11 @@ name: qresearch
 description: 编排 qrsearch 的市场因子物化与 train-only zer0factor 评估；用户提到 qr、因子分析、market research 或冻结因子快照时使用。
 ---
 
-# qresearch — Iteration 2 market factor workflow
+# qresearch — Iteration 3 market research workflow
 
-This iteration exposes deterministic market materialization and train-only factor screening. Strategy
-design, optimization, OOS backtest, quality gates, promote, and ops are an Iteration 3 boundary and
-must not be invoked through deleted legacy commands.
+This iteration exposes deterministic market materialization, train-only factor screening, and the
+market-only `qr pipeline research` strategy/backtest path. It always reads the frozen run dataset after
+materialization; it never queries zer0factor during signal generation or backtesting.
 
 ## Required workflow
 
@@ -20,7 +20,7 @@ must not be invoked through deleted legacy commands.
 6. Materialize, then evaluate the same run.
 7. Read zer0factor summary/report/daily IC/quantile returns and qresearch factor redundancy.
 8. Write the `factor_analysis` decision from train evidence only.
-9. Stop before strategy or OOS work until Iteration 3 is available.
+9. Set an explicit `risk.max_hold_sessions`, then run `qr pipeline research --config <yaml> --format json --quiet`.
 
 ## Hard constraints
 

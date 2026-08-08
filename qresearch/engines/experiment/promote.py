@@ -22,6 +22,21 @@ def promote_run(
     if not conclusion_path.exists():
         raise FileNotFoundError(f"missing conclusion: {conclusion_path}")
     conclusion = json.loads(conclusion_path.read_text(encoding="utf-8"))
+    meta_path = run_dir / "meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
+    if meta.get("sample_kind") == "market":
+        required = {
+            "feature_snapshot_sha256": meta.get("feature_snapshot_sha256"),
+            "zer0share_fingerprint": meta.get("zer0share_fingerprint"),
+            "zer0factor_revision": meta.get("zer0factor_revision"),
+        }
+        missing = [name for name, value in required.items() if not value]
+        artifacts = run_dir / "artifacts"
+        for name in ("feature_manifest.json", "split_summary.json", "factor_screening_manifest.json"):
+            if not (artifacts / name).is_file():
+                missing.append(name)
+        if missing:
+            raise PermissionError("market lineage is incomplete: " + ", ".join(missing))
     promotable = bool(conclusion.get("promotable"))
     if not promotable and not force:
         raise PermissionError("run is not promotable; pass force=True to override")
@@ -39,6 +54,14 @@ def promote_run(
     html = run_dir / "report" / "conclusion.html"
     if html.exists():
         shutil.copy2(html, dest / "conclusion.html")
+    if meta.get("sample_kind") == "market":
+        evidence_dir = dest / "evidence"
+        evidence_dir.mkdir(exist_ok=True)
+        for name in ("feature_manifest.json", "split_summary.json", "factor_screening_manifest.json"):
+            shutil.copy2(run_dir / "artifacts" / name, evidence_dir / name)
+        screening = run_dir / "artifacts" / "zer0factor_evaluation"
+        if screening.is_dir():
+            shutil.copytree(screening, evidence_dir / "zer0factor_evaluation")
 
     metrics = conclusion.get("metrics") or {}
     (dest / "metrics_oos.json").write_text(
@@ -52,6 +75,11 @@ def promote_run(
         "forced": bool(force),
         "promotable": promotable,
         "gates": conclusion.get("gates"),
+        "sample_kind": meta.get("sample_kind"),
+        "universe": meta.get("universe"),
+        "feature_snapshot_sha256": meta.get("feature_snapshot_sha256"),
+        "zer0share_fingerprint": meta.get("zer0share_fingerprint"),
+        "zer0factor_revision": meta.get("zer0factor_revision"),
     }
     (dest / "provenance.json").write_text(
         json.dumps(provenance, ensure_ascii=False, indent=2), encoding="utf-8"

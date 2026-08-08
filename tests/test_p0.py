@@ -27,6 +27,7 @@ from qresearch.io.envelope import ExitCode, ResultEnvelope, emit
 
 
 def _research_config(**updates: object) -> ResearchConfig:
+    updates.setdefault("risk", RiskConfig(max_hold_sessions=100))
     return ResearchConfig(
         sample=SampleConfig(
             universe="synthetic",
@@ -44,7 +45,7 @@ def test_cor_gfd_validity_one(panel: PricePanel, events: pl.DataFrame, sessions)
     cfg = _research_config(
         portfolio=PortfolioConfig(starting_cash=100_000, max_weight=0.5, max_new_entries_per_day=2),
         execution=ExecutionConfig(order_validity_sessions=1),
-        risk=RiskConfig(stop_loss=None, take_profit=None),
+        risk=RiskConfig(stop_loss=None, take_profit=None, max_hold_sessions=100),
     )
     # force first name limit-up on entry day by patching bar open
     entry = sessions[1]
@@ -70,7 +71,7 @@ def test_cor_gtd_and_decision_prior_close(panel: PricePanel, events: pl.DataFram
                 ref="decision_prior_close",
             ),
         ),
-        risk=RiskConfig(stop_loss=None, take_profit=None),
+        risk=RiskConfig(stop_loss=None, take_profit=None, max_hold_sessions=100),
     )
     entry = sessions[1]
     # day1 limit up
@@ -106,7 +107,7 @@ def test_cor_t1(panel: PricePanel, events: pl.DataFrame, sessions):
     cfg = _research_config(
         portfolio=PortfolioConfig(starting_cash=100_000, max_weight=0.8, max_new_entries_per_day=1),
         execution=ExecutionConfig(order_validity_sessions=1),
-        risk=RiskConfig(stop_loss=-0.9, take_profit=None),  # huge stop unlikely same open
+        risk=RiskConfig(stop_loss=-0.9, take_profit=None, max_hold_sessions=100),  # huge stop unlikely same open
     )
     res = run_backtest(ev, panel, cfg)
     buys = [t for t in res.trades if t["side"] == "buy"]
@@ -181,7 +182,7 @@ def test_exit_priority_stop_before_tp(panel: PricePanel, events: pl.DataFrame, s
     cfg = _research_config(
         portfolio=PortfolioConfig(starting_cash=100_000, max_weight=0.8, max_new_entries_per_day=1),
         execution=ExecutionConfig(order_validity_sessions=1),
-        risk=RiskConfig(stop_loss=-0.02, take_profit=0.02),
+        risk=RiskConfig(stop_loss=-0.02, take_profit=0.02, max_hold_sessions=100),
     )
     res = run_backtest(ev, panel, cfg)
     buys = [t for t in res.trades if t["side"] == "buy"]

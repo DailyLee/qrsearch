@@ -101,7 +101,7 @@ def test_lag_sessions_delays_first_buy(panel: PricePanel, events: pl.DataFrame, 
     cfg = research_config(
         portfolio=PortfolioConfig(starting_cash=100_000, max_weight=0.8, max_new_entries_per_day=1),
         execution=ExecutionConfig(order_validity_sessions=5, lag_sessions=1),
-        risk=RiskConfig(stop_loss=None, take_profit=None),
+        risk=RiskConfig(stop_loss=None, take_profit=None, max_hold_sessions=100),
     )
     res = run_backtest(ev, panel, cfg)
     buys = [t for t in res.trades if t["side"] == "buy"]
@@ -128,7 +128,7 @@ def test_sell_blocked_limit_down_sets_pending(panel: PricePanel, events: pl.Data
     cfg = research_config(
         portfolio=PortfolioConfig(starting_cash=100_000, max_weight=0.8, max_new_entries_per_day=1),
         execution=ExecutionConfig(order_validity_sessions=1),
-        risk=RiskConfig(stop_loss=None, take_profit=None),
+        risk=RiskConfig(stop_loss=None, take_profit=None, max_hold_sessions=100),
     )
     # first run to discover buy session, then craft limit-down on exit day
     res0 = run_backtest(ev, panel, cfg)
@@ -171,7 +171,7 @@ def test_buy_uses_close_when_execution_price_close(panel: PricePanel, events: pl
     cfg = research_config(
         portfolio=PortfolioConfig(starting_cash=100_000, max_weight=0.8, max_new_entries_per_day=1),
         execution=ExecutionConfig(price="close", order_validity_sessions=1),
-        risk=RiskConfig(stop_loss=None, take_profit=None),
+        risk=RiskConfig(stop_loss=None, take_profit=None, max_hold_sessions=100),
         costs=CostsConfig(commission_rate=0.0, commission_min=0.0, stamp_duty_rate=0.0, slippage_bps=0.0),
     )
     res = run_backtest(ev, panel, cfg)
@@ -191,7 +191,7 @@ def test_take_profit_fill_price(panel: PricePanel, events: pl.DataFrame, session
     cfg = research_config(
         portfolio=PortfolioConfig(starting_cash=100_000, max_weight=0.8, max_new_entries_per_day=1),
         execution=ExecutionConfig(order_validity_sessions=1, price="open"),
-        risk=RiskConfig(stop_loss=None, take_profit=0.02),
+        risk=RiskConfig(stop_loss=None, take_profit=0.02, max_hold_sessions=100),
         costs=CostsConfig(commission_rate=0.0, commission_min=0.0, stamp_duty_rate=0.0, slippage_bps=0.0),
     )
     # discover buy, then force TP touch next session without gap-through open
@@ -227,7 +227,7 @@ def test_insufficient_cash_or_lot_reject(panel: PricePanel, events: pl.DataFrame
             lot_size=100,
         ),
         execution=ExecutionConfig(order_validity_sessions=1),
-        risk=RiskConfig(stop_loss=None, take_profit=None),
+        risk=RiskConfig(stop_loss=None, take_profit=None, max_hold_sessions=100),
     )
     res = run_backtest(ev, panel, cfg)
     assert [t for t in res.trades if t["side"] == "buy"] == []
@@ -258,7 +258,7 @@ def test_entry_filter_rejects_then_retries(panel: PricePanel, events: pl.DataFra
                 ref="decision_prior_close",
             ),
         ),
-        risk=RiskConfig(stop_loss=None, take_profit=None),
+        risk=RiskConfig(stop_loss=None, take_profit=None, max_hold_sessions=100),
     )
     res = run_backtest(ev, panel, cfg)
     assert any(r["reason"] == "entry_filter_max" for r in res.rejects)
@@ -274,7 +274,7 @@ def test_data_gap_on_entry_retries(panel: PricePanel, events: pl.DataFrame, sess
     cfg = research_config(
         portfolio=PortfolioConfig(starting_cash=100_000, max_weight=0.8, max_new_entries_per_day=1),
         execution=ExecutionConfig(order_validity_sessions=5),
-        risk=RiskConfig(stop_loss=None, take_profit=None),
+        risk=RiskConfig(stop_loss=None, take_profit=None, max_hold_sessions=100),
     )
     res = run_backtest(ev, panel, cfg)
     assert any(r["reason"] == "data_gap" and r.get("instrument") == "AAA001.SZ" for r in res.rejects)
@@ -289,7 +289,7 @@ def test_deferred_exit_fills_after_limit_down_block(panel: PricePanel, events: p
     cfg = research_config(
         portfolio=PortfolioConfig(starting_cash=100_000, max_weight=0.8, max_new_entries_per_day=1),
         execution=ExecutionConfig(order_validity_sessions=1, price="open"),
-        risk=RiskConfig(stop_loss=-0.02, take_profit=None),
+        risk=RiskConfig(stop_loss=-0.02, take_profit=None, max_hold_sessions=100),
         costs=CostsConfig(commission_rate=0.0, commission_min=0.0, stamp_duty_rate=0.0, slippage_bps=0.0),
     )
     res0 = run_backtest(ev, panel, cfg)
