@@ -6,7 +6,12 @@ from datetime import date, timedelta
 
 import polars as pl
 
-from qresearch.config.models import ResearchConfig
+from qresearch.config.models import (
+    FeatureRefConfig,
+    FeatureSourceConfig,
+    ResearchConfig,
+    SampleConfig,
+)
 from qresearch.engines.analysis.pit_audit import run_pit_audit
 from qresearch.engines.data.panel import PricePanel
 from qresearch.engines.factor.ic import _fwd_return
@@ -21,6 +26,15 @@ def _sessions(n: int = 6) -> list[date]:
             out.append(d)
         d += timedelta(days=1)
     return out
+
+
+def _research_config() -> ResearchConfig:
+    return ResearchConfig(
+        sample=SampleConfig(universe="univ", start_date=date(2024, 1, 2), end_date=date(2024, 1, 31)),
+        features=FeatureSourceConfig(
+            refs=[FeatureRefConfig(name="momentum", availability_lag_sessions=0)]
+        ),
+    )
 
 
 def test_qfq_asof_session_does_not_use_future_factor():
@@ -157,7 +171,7 @@ def test_pit_audit_reports_session_pit():
         adj_mode="qfq",
     )
     panel.build_index()
-    audit = run_pit_audit(events, panel, ResearchConfig(), strict=False)
+    audit = run_pit_audit(events, panel, _research_config(), strict=False)
     assert audit["adjustment"]["methodology"] == "qfq_session_pit"
     assert audit["adjustment"]["full_pit_adj_factor_asof_session"] is True
     assert "adjustment_is_qfq_window_end_not_full_pit" not in audit["warnings"]
