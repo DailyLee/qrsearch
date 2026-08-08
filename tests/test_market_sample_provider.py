@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -107,6 +108,67 @@ def test_materialize_rejects_duplicate_daily_membership() -> None:
 
     with pytest.raises(ResearchDataError, match="duplicate"):
         MarketSampleProvider(pro, _calendar()).materialize(_config())
+
+
+def test_materialize_rejects_membership_from_a_different_universe() -> None:
+    # Ignoring the response universe would mislabel another universe's stock as this sample's membership.
+    pro = FakeLocalPro(
+        [
+            {"trade_date": "20240102", "universe": "univ_trade_hs300", "ts_code": "000001.SZ"},
+        ]
+    )
+
+    with pytest.raises(ResearchDataError, match="universe"):
+        MarketSampleProvider(pro, _calendar()).materialize(_config())
+
+
+def test_materialize_keeps_final_asof_when_calendar_has_its_next_session() -> None:
+    # Using config.end_date as a hard cutoff would discard a valid next-session-effective final membership.
+    pro = FakeLocalPro(
+        [
+            {"trade_date": "20240105", "universe": "univ_research_base", "ts_code": "000004.SZ"},
+        ]
+    )
+    calendar = [*_calendar(), date(2024, 1, 8)]
+
+    samples = MarketSampleProvider(pro, calendar).materialize(_config())
+
+    assert samples.frame.select("asof_session", "effective_session").to_dicts() == [
+        {"asof_session": date(2024, 1, 5), "effective_session": date(2024, 1, 8)}
+    ]
+    assert samples.manifest["dropped_no_effective_session"] == 0
+
+
+def test_materialize_fingerprint_changes_when_relevant_universe_partition_changes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    # Dropping source data identity would make changed historical membership indistinguishable between runs.
+    monkeypatch.delenv("ZER0SHARE_DATA", raising=False)
+    monkeypatch.setattr(
+        "qresearch.research.providers.market.get_settings",
+        lambda: SimpleNamespace(data_dir=lambda: tmp_path),
+    )
+    partition = (
+        tmp_path
+        / "stock"
+        / "universe"
+        / "name=univ_research_base"
+        / "date=20240102"
+        / "data.parquet"
+    )
+    partition.parent.mkdir(parents=True)
+    partition.write_bytes(b"membership-v1")
+    pro = FakeLocalPro(
+        [
+            {"trade_date": "20240102", "universe": "univ_research_base", "ts_code": "000001.SZ"},
+        ]
+    )
+
+    first = MarketSampleProvider(pro, _calendar()).materialize(_config())
+    partition.write_bytes(b"membership-v2-with-revised-content")
+    second = MarketSampleProvider(pro, _calendar()).materialize(_config())
+
+    assert first.manifest["zer0share_data_fingerprint"] != second.manifest["zer0share_data_fingerprint"]
 
 
 def test_materialize_drops_last_session_without_effective_date_and_records_lineage() -> None:

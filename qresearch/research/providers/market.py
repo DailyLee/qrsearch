@@ -85,6 +85,11 @@ class MarketSampleProvider:
         dropped_no_effective_session = 0
 
         for row in rows:
+            if str(row["universe"]) != config.universe:
+                raise ResearchDataError(
+                    "zer0share universe response contains membership for "
+                    f"{row['universe']!r}, expected {config.universe!r}"
+                )
             asof_session = _as_date(row["trade_date"])
             instrument = str(row["ts_code"])
             if asof_session not in self._next_session:
