@@ -55,7 +55,7 @@ Exit codes: `0` ok, `2` config, `3` data, `4` gate blocked, `5` dependency missi
 
 ## Daily open execution contract
 
-Daily backtests fill at the open using zer0share's **same-session historical** `up_limit` / `down_limit`: an open at the limit-up is not buyable, an open at the limit-down is not sellable, and suspended sessions do not fill. The model does not simulate order queues, limit-open release timing, or the order book. Factor IC and theoretical forward returns do **not** apply these fill filters; they measure the price relationship, while the backtest separately measures executable results.
+Daily fills use `execution.price` (`open` by default; `close` is also supported). Eligibility always uses zer0share's **same-session opening** `up_limit` / `down_limit`: an open at the limit-up is not buyable, an open at the limit-down is not sellable, and suspended sessions do not fill. The model does not simulate order queues, limit-open release timing, or the order book. Factor IC and theoretical forward returns do **not** apply these fill filters; they measure the price relationship, while the backtest separately measures executable results.
 
 ## Layout
 
