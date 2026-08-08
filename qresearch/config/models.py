@@ -272,6 +272,9 @@ class AppSettings(BaseSettings):
 
     zer0share_root: str = r"C:\Users\dl271\Downloads\code\zer0share"
     zer0share_data: str | None = None
+    zer0factor_root: str = r"C:\Users\dl271\Downloads\code\zer0factor"
+    zer0factor_factor_dir: Path = Path("../zer0factor/data/factors")
+    zer0factor_db_path: Path = Path("../zer0factor/data/factors.duckdb")
     qresearch_events: str = "workspace/events"
     runs_dir: Path = Path("workspace/runs")
     packages_dir: Path = Path("workspace/models")  # promoted model packages

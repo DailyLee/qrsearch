@@ -31,6 +31,10 @@ workspace/studies/<study_id>/{INDEX.md,decisions/*.md|*.json}
 workspace/models/<model_id>/<version>/{spec.yaml,provenance.json,metrics_oos.json,report/}
 ```
 
+## zer0factor feature snapshots
+
+`AppSettings` locates the existing dependency with `ZER0FACTOR_ROOT`, `ZER0FACTOR_FACTOR_DIR`, and `ZER0FACTOR_DB_PATH`. The provider opens `FactorStorage(..., init_db=False)` only after all three paths exist; it does not create a fallback directory, database, or factor data. Each declared `features.refs` entry is read once, shifted by its `availability_lag_sessions` over the trading calendar, and joined only where `available_session == asof_session` (no stale-value forward fill). The frozen snapshot manifest records per-factor coverage, source fingerprints, zer0factor revision/package fallback, and `feature_snapshot_hash`.
+
 Research artifacts (typical): `sample_profile.json`（含 `years` / `years_span`）, `ic_summary.csv`, `icir_summary.csv`, `alpha_beta_summary.csv`, `quantile_returns.csv`, `factor_corr.csv`, `factor_diagnostics.json`, `preprocess_report.json`, `events_preprocessed.parquet`, `sweep_grid.csv`, `sensitivity_grid.csv`, `trades_diagnostics.json`.
 
 ## CLI map

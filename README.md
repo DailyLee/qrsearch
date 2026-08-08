@@ -17,9 +17,14 @@ Copy `.env.example` to `.env` (optional):
 |----------|---------|
 | `ZER0SHARE_ROOT` | Path to zer0share repo (for `LocalPro` import) |
 | `ZER0SHARE_DATA` | Path to local parquet data directory |
+| `ZER0FACTOR_ROOT` | Path to zer0factor repo (for `FactorStorage` import) |
+| `ZER0FACTOR_FACTOR_DIR` | Existing zer0factor factor-partition directory (read-only) |
+| `ZER0FACTOR_DB_PATH` | Existing zer0factor factor registry DuckDB (read-only) |
 | `QRESEARCH_EVENTS` | Default events path / directory |
 
 Market data is loaded via zer0share `LocalPro`. This project does **not** depend on `vnpy` or `vnpy_portfoliostragtegy`.
+
+When a market-research run materializes zer0factor features, it reads each declared factor once and joins only values whose availability session exactly equals the observation's `asof_session`; it never creates or writes factor data.
 
 ## Quick start
 
