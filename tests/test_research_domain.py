@@ -16,14 +16,14 @@ from qresearch.config.models import (
 from qresearch.research.domain import SampleSet, resolve_repo_revision, sha256_path
 
 
-def _observations(*, effective_before_asof: bool = True, weight: float = 1.0) -> pl.DataFrame:
+def _observations(*, effective_after_asof: bool = True, weight: float = 1.0) -> pl.DataFrame:
     """A valid market sample; mutations below each exercise one invariant."""
     return pl.DataFrame(
         {
             "sample_id": ["market-1"],
             "instrument": ["000001.SZ"],
             "asof_session": [date(2024, 1, 3)],
-            "effective_session": [date(2024, 1, 2) if effective_before_asof else date(2024, 1, 4)],
+            "effective_session": [date(2024, 1, 4) if effective_after_asof else date(2024, 1, 2)],
             "sample_weight": [weight],
         }
     ).with_columns(
@@ -40,10 +40,10 @@ def test_sample_set_rejects_duplicate_observation_keys() -> None:
         SampleSet(frame=frame, manifest={})
 
 
-def test_sample_set_rejects_effective_session_after_asof_session() -> None:
-    # Removing chronology validation would admit future-effective observations.
+def test_sample_set_rejects_effective_session_before_asof_session() -> None:
+    # Reversing chronology validation would admit an observation before it becomes effective.
     with pytest.raises(ValueError, match="effective_session"):
-        SampleSet(frame=_observations(effective_before_asof=False), manifest={})
+        SampleSet(frame=_observations(effective_after_asof=False), manifest={})
 
 
 def test_sample_set_rejects_negative_sample_weight() -> None:

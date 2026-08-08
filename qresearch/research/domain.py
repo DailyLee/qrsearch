@@ -24,8 +24,8 @@ def _validate_observations(frame: pl.DataFrame, *, require_weight: bool = False)
             raise ValueError(f"{column} must have pl.Date dtype")
     if frame.select(pl.struct(list(OBSERVATION_KEYS)).is_duplicated().any()).item():
         raise ValueError("research frame contains duplicate observation keys")
-    if frame.filter(pl.col("effective_session") > pl.col("asof_session")).height:
-        raise ValueError("effective_session must be on or before asof_session")
+    if frame.filter(pl.col("effective_session") < pl.col("asof_session")).height:
+        raise ValueError("effective_session must be on or after asof_session")
     if require_weight and frame.filter(pl.col("sample_weight") < 0).height:
         raise ValueError("sample_weight must be non-negative")
 
