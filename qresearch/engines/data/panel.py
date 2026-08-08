@@ -164,7 +164,7 @@ def _cache_key(
 ) -> str:
     """Cache raw+adj_factor panels; bump prefix when on-disk schema changes."""
     uni = hashlib.sha1(",".join(sorted(instruments)).encode()).hexdigest()[:12]
-    return f"pit_raw_v1_{adj_mode}_{start.isoformat()}_{end.isoformat()}_{uni}"
+    return f"pit_raw_v2_{adj_mode}_{start.isoformat()}_{end.isoformat()}_{uni}"
 
 
 def load_price_panel(

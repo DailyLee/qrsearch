@@ -113,6 +113,8 @@ _EMPTY_BARS = {
     "vol": pl.Float64,
     "amount": pl.Float64,
     "adj_factor": pl.Float64,
+    "up_limit": pl.Float64,
+    "down_limit": pl.Float64,
 }
 
 
@@ -165,8 +167,24 @@ def load_daily_long(
     if adj_df is None or adj_df.empty:
         raise VendorError("adj_factor empty")
 
+    limit_df = pro.stk_limit(
+        start_date=start_s,
+        end_date=end_s,
+        fields="ts_code,trade_date,up_limit,down_limit",
+    )
+    if limit_df is None or getattr(limit_df, "empty", True):
+        limit_df = pd.DataFrame(columns=["ts_code", "trade_date", "up_limit", "down_limit"])
+    else:
+        limit_df = limit_df[limit_df["ts_code"].isin(codes)][
+            ["ts_code", "trade_date", "up_limit", "down_limit"]
+        ]
+
     merged = daily.merge(
         adj_df[["ts_code", "trade_date", "adj_factor"]],
+        on=["ts_code", "trade_date"],
+        how="left",
+    ).merge(
+        limit_df,
         on=["ts_code", "trade_date"],
         how="left",
     ).sort_values(["ts_code", "trade_date"])
@@ -177,16 +195,36 @@ def load_daily_long(
     merged["trade_date"] = pd.to_datetime(merged["trade_date"].astype(str), format="%Y%m%d")
     pl_df = pl.from_pandas(
         merged[
-            ["ts_code", "trade_date", "open", "high", "low", "close", "vol", "amount", "adj_factor"]
+            [
+                "ts_code",
+                "trade_date",
+                "open",
+                "high",
+                "low",
+                "close",
+                "vol",
+                "amount",
+                "adj_factor",
+                "up_limit",
+                "down_limit",
+            ]
         ].rename(columns={"ts_code": "instrument"})
     ).with_columns(
         pl.col("trade_date").cast(pl.Date),
         pl.col("adj_factor").cast(pl.Float64),
+        pl.col("up_limit").cast(pl.Float64),
+        pl.col("down_limit").cast(pl.Float64),
     )
 
     settings = get_settings()
     data_root = Path(os.environ.get("ZER0SHARE_DATA", settings.data_dir()))
-    fp = fingerprint_paths(list(data_root.glob("daily/**/data.parquet"))[:100])
+    fp = fingerprint_paths(
+        [
+            *data_root.glob("stock/daily_kline/**/data.parquet"),
+            *data_root.glob("stock/adj_factor/**/data.parquet"),
+            *data_root.glob("stock/stk_limit/**/data.parquet"),
+        ]
+    )
     return pl_df, fp
 
 
@@ -205,15 +243,31 @@ def load_index_daily(ts_code: str, start: date, end: date) -> pl.DataFrame:
     if "amount" not in df.columns:
         df["amount"] = 0.0
     df["adj_factor"] = 1.0
+    df["up_limit"] = None
+    df["down_limit"] = None
     return pl.from_pandas(
-        df[["ts_code", "trade_date", "open", "high", "low", "close", "vol", "amount", "adj_factor"]].rename(
-            columns={"ts_code": "instrument"}
-        )
+        df[
+            [
+                "ts_code",
+                "trade_date",
+                "open",
+                "high",
+                "low",
+                "close",
+                "vol",
+                "amount",
+                "adj_factor",
+                "up_limit",
+                "down_limit",
+            ]
+        ].rename(columns={"ts_code": "instrument"})
     ).with_columns(
         pl.col("trade_date").cast(pl.Date),
         pl.col("vol").cast(pl.Float64),
         pl.col("amount").cast(pl.Float64),
         pl.col("adj_factor").cast(pl.Float64),
+        pl.col("up_limit").cast(pl.Float64),
+        pl.col("down_limit").cast(pl.Float64),
     )
 
 

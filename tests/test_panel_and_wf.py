@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import date
 
 import polars as pl
@@ -7,7 +8,8 @@ import pytest
 
 from qresearch.config.models import ResearchConfig, RiskConfig, WalkForwardConfig
 from qresearch.engines.analysis.metrics import absolute_metrics
-from qresearch.engines.data.panel import derive_panel_range
+from qresearch.engines.data import vendor
+from qresearch.engines.data.panel import derive_panel_range, load_price_panel
 from qresearch.engines.experiment.walkforward import build_folds, year_bounds
 from qresearch.io.envelope import ExitCode, fail_envelope
 
@@ -35,6 +37,50 @@ def test_derive_panel_range_extends_buffers():
     start, end = derive_panel_range(events, cfg)
     assert start < date(2024, 1, 10)
     assert end >= date(2024, 2, 15)
+
+
+def test_load_price_panel_ignores_prior_limit_schema_cache(monkeypatch, tmp_path):
+    """Catches reusing a v1 cache that cannot carry historical price limits."""
+    events = pl.DataFrame(
+        {
+            "entry_intent_date": [date(2024, 1, 10)],
+            "exit_intent_date": [date(2024, 1, 12)],
+            "instrument": ["000001.SZ"],
+        }
+    )
+    config = ResearchConfig(adjustment={"mode": "none"}, benchmark={"instrument": ""})
+    start, end = derive_panel_range(events, config)
+    universe = hashlib.sha1(b"000001.SZ").hexdigest()[:12]
+    stale_path = tmp_path / f"pit_raw_v1_none_{start.isoformat()}_{end.isoformat()}_{universe}.parquet"
+    stale_bars = pl.DataFrame(
+        {
+            "instrument": ["000001.SZ"],
+            "trade_date": [date(2024, 1, 10)],
+            "open": [10.0],
+            "high": [10.2],
+            "low": [9.8],
+            "close": [10.1],
+            "vol": [100.0],
+            "amount": [1_000.0],
+            "adj_factor": [1.0],
+        }
+    )
+    stale_bars.write_parquet(stale_path)
+    fresh_bars = stale_bars.with_columns(
+        pl.lit(11.0).alias("up_limit"), pl.lit(9.0).alias("down_limit")
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        vendor,
+        "load_daily_long",
+        lambda instruments, *_args, **_kwargs: (calls.append(instruments) or (fresh_bars, "fresh")),
+    )
+    monkeypatch.setattr(vendor, "load_trade_calendar", lambda *_args: [date(2024, 1, 10)])
+
+    panel = load_price_panel(events, config, cache_dir=tmp_path)
+
+    assert calls == [["000001.SZ"]]
+    assert panel.get("000001.SZ", date(2024, 1, 10))["up_limit"] == 11.0
 
 
 def test_build_folds_rolling_and_year_bounds():
