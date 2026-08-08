@@ -67,6 +67,16 @@ class ResearchDataset:
         _validate_observations(self.frame)
 
 
+@dataclass(frozen=True)
+class FactorScreeningResult:
+    summary: pl.DataFrame
+    run_dir: Path
+    manifest: dict[str, object]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "run_dir", Path(self.run_dir))
+
+
 def sha256_path(path: Path) -> str:
     """Return the SHA-256 digest of a file without loading it all into memory."""
     digest = sha256()
