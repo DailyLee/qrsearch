@@ -6,14 +6,15 @@
 
 ## 0. 交付解释
 
-本文描述长期目标架构。2026-08-08 当前获批实现范围已拆分为三个顺序迭代，执行时以下列索引和
+本文描述当前目标架构。2026-08-08 获批实现范围已拆分为三个顺序迭代，执行时以下列索引和
 对应迭代文档为权威：
 
 - [`Iteration 1 — Correctness Baseline`](../plans/2026-08-08-universal-research-kernel-iteration-1-correctness.md)
-- [`Iteration 2 — Event and Market Factor Research`](../plans/2026-08-08-universal-research-kernel-iteration-2-market-research.md)
+- [`Iteration 2 — Market Factor Research`](../plans/2026-08-08-universal-research-kernel-iteration-2-market-research.md)
 - [`Iteration 3 — Strategy, Backtest, and CLI`](../plans/2026-08-08-universal-research-kernel-iteration-3-strategy-cli.md)
 
-三个迭代只交付单一内核的 event + market，并一次性替换旧入口，不保留版本兼容代码。本文中的 index/custom/hybrid、全局不可变
+三个迭代只交付 `zer0share PIT universe + zer0factor` 这一条 market 链路，并一次性删除 event/CSV 入口，
+不保留版本兼容代码。index/custom/hybrid/event Provider、全局不可变
 FactorArtifact、revision/vintage、HAC/FDR/PBO/CPCV、通用 DAG/cache 和更细执行模型属于长期
 目标，不是三个迭代的完成条件。实现 Agent 不得为这些延期能力创建空实现；后续需单独设计和计划。
 
@@ -39,14 +40,14 @@ FactorArtifact、revision/vintage、HAC/FDR/PBO/CPCV、通用 DAG/cache 和更�
 ResearchDataset = SampleSet × FeatureSnapshot × LabelSet
 ```
 
-事件只是 `SampleSet` 的一种。因子统一由 `zer0factor` 生成、预处理、版本化和存储；
-`qrsearch` 负责样本、标签、切分、条件化评估、策略、回测和实验治理。
+SampleSet 固定表示 zer0share 动态 universe 的股票×交易日观察。因子统一由 `zer0factor` 生成、预处理、
+版本化和存储；`qrsearch` 负责样本、标签、切分、截面评估、策略、回测和实验治理。
 
 ## 2. 目标
 
-1. 使用同一研究内核支持全市场、动态指数成分、事件触发和自定义股票池。
+1. 使用 zer0share 的逐日 PIT universe 支持全市场或已物化 universe 的截面研究。
 2. 让 `zer0factor` 成为因子公式、因子值、处理变体和因子版本的唯一真源。
-3. 保留 `qrsearch` 已有的事件研究、交易约束、Walk-forward、门禁和报告能力。
+3. 复用 `qrsearch` 已有的交易约束、Walk-forward、门禁和报告能力，删除事件 CSV 数据入口。
 4. 所有研究输入都满足 point-in-time，可解释数据何时观察、何时真正可用。
 5. 因子评估、策略构造和组合回测分层，避免用单一 IC 直接推导交易参数。
 6. 每个正式 run 都能由不可变配置、数据指纹、因子版本和代码版本复现。
@@ -55,7 +56,7 @@ ResearchDataset = SampleSet × FeatureSnapshot × LabelSet
 ## 3. 非目标
 
 - 不在 `qrsearch` 中实现第二套行情、基本面或因子存储系统。
-- 不把 `zer0factor` 的 Alphalens 日频评估结果当作事件条件化评估的等价替代。
+- 不把 `zer0factor` 的 Alphalens 日频评估结果当作 qrsearch 截面/组合评估的等价替代。
 - 不在本次改造中引入 vnpy、OMS、分钟线或实盘交易框架。
 - 不建设双内核、兼容适配器、配置迁移器或弃用周期；本项目允许 breaking change。
 - 不把因子计算塞进信号或回测循环。
@@ -81,8 +82,7 @@ ResearchDataset = SampleSet × FeatureSnapshot × LabelSet
 - `FactorSpec`、因子依赖、因子计算和 FactorFamily。
 - 原始、标准化、中性化等明确命名的因子变体。
 - 因子值存储、版本 manifest、覆盖率和计算 lineage。
-- 全市场日频截面基础诊断与候选因子预筛。
-- 外部事件特征 Provider：扫描器产生的箱体、突破等特征若要进入统一体系，必须先标准化为带时点的因子值。
+- 通过 `EvaluationService` 提供全市场日频 IC、分层收益、单调性、换手、基础组合诊断与候选因子预筛。
 
 不负责研究样本切分、策略参数搜索和最终组合晋升。
 
@@ -90,13 +90,14 @@ ResearchDataset = SampleSet × FeatureSnapshot × LabelSet
 
 唯一负责：
 
-- `SampleSet`、动态 universe 和事件样本定义。
+- `SampleSet` 和动态 universe 定义。
 - `LabelSpec`、标签物化、训练/OOS 切分、purge 和 embargo。
-- 全市场、事件条件化和混合样本的研究协议。
+- train/validate/holdout 研究协议，以及 zer0factor screening 输入的 PIT/角色审计。
 - 信号选择、组合构造、成本、成交限制、风险、回测和 Walk-forward。
 - 实验注册、假设、试验次数、质量门禁、报告和模型晋升。
 
-`qrsearch` 只引用因子，不拥有因子公式或因子处理实现。
+`qrsearch` 只引用因子，不拥有因子公式、预处理或通用评价指标实现。唯一允许的补充因子诊断是 train-only
+跨因子冗余矩阵，因为当前 zer0factor EvaluationService 尚未提供该产物。
 
 ## 5. 核心领域模型
 
@@ -122,17 +123,15 @@ class ObservationKey:
 
 `SampleSet` 只回答“研究哪些观察”，不携带因子公式和未来收益：
 
+当前只有一个具体实现，不建立 Provider registry：
+
 ```python
-class SampleProvider(Protocol):
-    def materialize(self, request: SampleRequest) -> SampleSet: ...
+class MarketSampleProvider:
+    def materialize(self, config: SampleConfig) -> SampleSet: ...
 ```
 
-首期支持：
-
-- `market`：某个动态 universe 的全部日频观察。
-- `index`：指定指数 point-in-time 成分。
-- `event`：由事件 CSV 或事件 Provider 产生的稀疏观察。
-- `custom`：用户提供的、满足标准键契约的 Parquet 数据。
+它只生成某个 zer0share 动态 universe 的全部日频观察。index/custom/event 若未来确有需求，单独设计，
+不预留枚举、空 Provider 或分派层。
 
 `SampleSet` 最少包含：`sample_id, ts_code, asof_time, effective_time, sample_weight`。
 
@@ -249,13 +248,13 @@ class SplitManifest:
 
 ### 5.7 EvaluationProtocol
 
-评估协议必须声明统计问题，结果不可混为同一排名：
+通用因子评估由 zer0factor EvaluationService 执行；qrsearch 负责保证输入来自冻结 snapshot 且 membership
+只包含 train。评估协议必须声明统计问题，结果不可混为同一排名：
 
 - `cross_sectional`：按交易日计算截面 Rank IC，再做时间聚合。
-- `event_conditioned`：只在事件 SampleSet 上评估，优先按事件日期或事件队列聚合。
 - `portfolio`：将信号送入组合和执行模型后评估经济结果。
 
-现有跨全部事件 pooled Spearman 只保留为诊断指标，不再作为默认主 IC。
+qrsearch 不重新计算 pooled 或 date-wise IC；直接消费 zer0factor 的 daily_ic、summary 和 report。
 
 通用因子评估最少输出：
 
@@ -271,12 +270,12 @@ class SplitManifest:
 
 ### 5.8 StrategySpec
 
-策略不再依赖事件专属日期字段，而由以下对象组合：
+策略公共配置不依赖事件专属日期字段，并复用现有最小对象：
 
-- `RebalanceSpec`：日频、周频、月频或事件触发。
+- 日频再平衡：当前唯一频率，不增加 `RebalanceSpec` 枚举。
 - `SelectionSpec`：filters、rank、composite 和 top-k。
 - `PortfolioSpec`：权重、持仓数、行业和个股上限。
-- `HoldingSpec`：固定周期、事件退出、止损止盈或组合条件。
+- `risk.max_hold_sessions`：当前唯一固定持有周期；止损止盈继续使用既有 risk 字段。
 - `ExecutionSpec`：信号延迟、成交价、订单有效期、成本和涨跌停约束。
 
 执行约束必须从 point-in-time 证券状态解析，不能用单一固定比例代表全部 A 股：至少覆盖
@@ -284,15 +283,15 @@ class SplitManifest:
 同时触发止盈和止损，必须使用预声明的保守路径或输出收益上下界，不能把未知日内路径
 当成确定成交顺序。
 
-旧 `entry_intent_date / exit_intent_date` 由 `EventScheduleAdapter` 转换为上述对象，
-不再渗透到通用内核。
+Market strategy adapter 可以在内存中生成底层 signal/backtest 暂时需要的
+`entry_intent_date / exit_intent_date`，但这些列不是公共配置或 CSV 契约。
 
 ## 6. 数据流
 
 ```text
 ResearchConfig
       │
-      ├── SampleProvider ───────────────> SampleSet
+      ├── MarketSampleProvider ─────────> SampleSet
       │                                      │
       ├── Zer0FactorFeatureProvider ─────> FeatureSnapshot
       │                                      │
@@ -304,26 +303,47 @@ ResearchConfig
                                              │
                     ┌────────────────────────┼───────────────────────┐
                     │                        │                       │
-              FactorEvaluator         SignalBuilder         PortfolioBacktest
+       Zer0FactorEvaluationService    SignalBuilder         PortfolioBacktest
                     │                        │                       │
                     └────────────────────────┴───────────────────────┘
                                              │
                                       Run artifacts/report
 ```
 
-主 pipeline 改为显式阶段 DAG：
+主 pipeline 使用显式线性编排，不建立通用 DAG：
 
 1. `materialize_samples`
 2. `materialize_features`
 3. `materialize_labels`
 4. `build_split_manifest`
-5. `evaluate_features`
+5. `evaluate_features_with_zer0factor`
 6. `build_signals`
 7. `run_backtest`
 8. `evaluate_gates`
 9. `write_report`
 
-每个阶段只读取前序不可变产物，可以单独重跑和缓存。
+每个阶段只读取前序不可变产物。EvaluationService 通过 qrsearch 的 FrozenSnapshotStorage 和
+TrainUniversePro adapter 读取冻结因子与 train membership，不直接读取可变 FactorStorage 或全期 universe。
+
+### 6.1 Agent 因子分析路径
+
+```text
+qr data ping
+  → qr research factors（列出 FactorStorage 可读取因子）
+  → qr config new（填写 market universe、时间角色、候选 refs）
+  → qr research materialize（冻结 SampleSet/FeatureSnapshot/LabelSet）
+  → qr research evaluate
+      → FrozenSnapshotStorage
+      → TrainUniversePro
+      → zer0factor.services.EvaluationService
+      → summary/report/daily_ic/quantile_returns
+      → qrsearch train-only factor_redundancy
+  → Agent 读取证据并写 factor_analysis decision
+  → 策略设计 → market OOS 回测 → quality gates
+```
+
+raw 与中性化对照必须引用 zer0factor 已物化的不同 factor names；qrsearch 不现场拟合预处理。Agent 不读取
+validate/holdout 来选择因子方向、分位数或候选池，zer0factor screening 产物也不得标记为 OOS/promotable。
 
 ## 7. Point-in-time 规则
 
@@ -332,14 +352,14 @@ ResearchConfig
 1. 原始字段同时声明 observation time 和 availability time。
 2. 因子计算只允许读取 `asof_time` 可见的数据。
 3. 收盘后因子用于次日开盘，必须设置至少一个合适的 session lag。
-4. 基本面和事件信息按真实发布日期连接，不能按报告期直接前填。
+4. 基本面信息按真实发布日期连接，不能按报告期直接前填。
 5. 动态 universe 使用当时成分，禁止用当前上市股票回填历史。
 6. 复权模式必须进入 factor manifest 和 run lineage。
 7. 因子回看窗口必须在物化前扩展，不能让研究起点前几期静默缺失。
 8. 横截面预处理仅使用当日可见股票；训练型预处理参数只能由训练区间拟合。
 9. 全市场和指数样本必须使用逐日有效 universe；禁止以当前 `list_status=L` 股票回填历史。
 10. 财务和可修订数据必须保存公告时间与 vintage；仅有当前修订值的数据不得标 PIT-safe。
-11. event CSV 中的 `features.*` 一律忽略；所有因子只从 zer0factor 只读快照连接，不存在 inline 因子例外。
+11. 所有因子只从 zer0factor 只读快照连接；生产代码不读取 event CSV 或 inline `features.*`。
 
 ## 8. 配置设计
 
@@ -351,10 +371,9 @@ data:
   adjustment: qfq_pit
 
 sample:
-  kind: event
-  sources:
-    - workspace/events/example.csv
-  board: limit10
+  universe: univ_research_base
+  start_date: YYYY-MM-DD
+  end_date: YYYY-MM-DD
 
 features:
   provider: zer0factor
@@ -378,20 +397,18 @@ split:
   embargo_sessions: 5
 
 evaluation:
-  protocol: event_conditioned
+  protocol: cross_sectional
   primary_metric: excess
 
 strategy:
-  holding:
-    kind: event_exit
   rebalance:
-    kind: event
+    kind: daily
   selection:
     filters: []
     rank_by: []
 ```
 
-配置模型使用 `extra="forbid"`。旧 mode、旧单数 source、inline feature provider 和其他已删除字段直接
+配置模型使用 `extra="forbid"`。旧 mode、kind、source(s)、event/CSV、inline feature provider 和其他已删除字段直接
 返回配置错误；不提供 alias、自动迁移或 fallback。`resolved_config.yaml` 只记录新模型的默认值展开结果。
 
 ## 9. Run 产物与 lineage
@@ -404,12 +421,15 @@ workspace/runs/{run_id}/
 ├── resolved_config.yaml
 ├── meta.json
 ├── artifacts/
-│   ├── sample_manifest.parquet
+│   ├── sample_set.parquet
 │   ├── feature_snapshot.parquet
 │   ├── feature_manifest.json
-│   ├── label_snapshot.parquet
-│   ├── split_manifest.json
-│   ├── evaluation_summary.parquet
+│   ├── label_set.parquet
+│   ├── dataset.parquet
+│   ├── split_summary.json
+│   ├── factor_screening_manifest.json
+│   ├── factor_redundancy.parquet
+│   ├── zer0factor_evaluation/
 │   ├── metrics.json
 │   └── pit_audit.json
 └── report/
@@ -429,11 +449,11 @@ workspace/runs/{run_id}/
 
 开发按迭代推进，但产品只交付一套最终行为：
 
-1. Iteration 1 用规范合成样本冻结正确的事件研究业务结果，不冻结旧 API。
-2. Iteration 2 建立 event/market SampleProvider 和共享研究数据集；开发期间可暂未接管正式入口。
-3. Iteration 3 将 `pipeline research` 直接切换到新内核。
-4. 同一迭代删除旧配置字段、`--csv` 参数、inline factor 路径、旧 dispatcher/adapter 和仅服务这些代码的测试。
-5. 使用 `rg` 和 CLI 拒绝用例证明没有静默 fallback；不提供 migrate 命令或弃用周期。
+1. Iteration 1 已用规范合成样本修正旧引擎的统计和执行正确性；该 contract 不要求继续保留 event API。
+2. Iteration 2 建立唯一 MarketSampleProvider 和 market 研究数据集，同时删除旧配置字段、`--csv` 参数、
+   inline factor 路径、旧 dispatcher/adapter 和仅服务这些代码的测试；该阶段只提供 materialize/evaluate。
+3. Iteration 3 基于冻结 market dataset 重新提供 `pipeline research` 和优化/敏感性命令。
+4. 使用 `rg` 和 CLI 拒绝用例证明没有静默 fallback；不提供 migrate 命令或弃用周期。
 
 全过程只有 zer0factor 一个因子真源；qrsearch 对 FactorStorage 始终只读。
 
@@ -444,6 +464,7 @@ workspace/runs/{run_id}/
 - ObservationKey 唯一性和时区/交易时段规范化。
 - SampleProvider 输出 schema、重复键和动态 universe PIT。
 - Zer0FactorFeatureProvider 版本解析、lag join、缺失和覆盖率。
+- zer0factor EvaluationService adapter 的冻结存储、train-only universe、请求映射和 artifact 审计。
 - LabelProvider 价格口径、未来区间和停牌处理。
 - Splitter 的 purge/embargo 不变量。
 
@@ -452,12 +473,12 @@ workspace/runs/{run_id}/
 - 人工构造未来才发布的因子值，验证不会提前连接。
 - 人工构造指数调仓，验证历史 universe 不使用未来成分。
 - 人工构造标签重叠，验证训练样本被 purge。
-- 同时覆盖 market、event 和 hybrid SampleSet。
+- 覆盖 market universe 调入、调出、退市、停牌和末端无下一交易日。
 
 ### 11.3 契约回归测试
 
-- event 与 market 都满足统一观察键、数据 lineage、标签和回测契约。
-- Iteration 1 的规范样本、信号、交易和核心指标保持在约定容差内；不约束旧函数签名或配置字段。
+- market 满足统一观察键、数据 lineage、标签和回测契约。
+- Iteration 1 的规范结果用于确认正确性修复已经落地；Iteration 3 删除对应 event contract 测试。
 - CLI JSON 信封和退出码满足新 Agent 契约；已删除参数和字段必须明确失败。
 
 ### 11.4 本地集成测试
@@ -471,8 +492,12 @@ workspace/runs/{run_id}/
 
 当前存储偏向按日期覆盖，版本 manifest、availability lag 和自动回看预热仍需增强。
 三个迭代不修改 zer0factor。qrsearch 在 run 开始时批量读取、复制到 run 目录、计算内容哈希并在之后只读
-该快照；读取期间检测到源分区变化则失败。这个 run-level snapshot 足够支撑当前 event/market 交付，
+该快照；读取期间检测到源分区变化则失败。这个 run-level snapshot 足够支撑当前 market 交付，
 但不冒充全局 FactorArtifact。需要跨 run 的不可变发布时另立上游提案并取得用户批准。
+
+EvaluationService 默认会自行读取 FactorStorage 和 universe。qrsearch 禁止直接采用默认依赖组合，必须注入
+FrozenSnapshotStorage 与 TrainUniversePro；其 `open_t1`/Alphalens 收益只用于 train screening，正式收益、
+成交约束和 OOS 结论仍以 qrsearch LabelSet 与 backtest 为准。
 
 ### 12.2 Pandas 与 Polars 边界
 
@@ -499,14 +524,13 @@ availability、revision/vintage、依赖版本和分区文件哈希；物化完�
 
 当前 `zer0factor` 的 `universe="all"` 通过今天仍上市的股票列表构建历史面板，会遗漏退市股票。
 通用内核必须从 `zer0share` 的逐日证券主数据生成 market SampleSet，并对上市、退市、ST、
-板块和指数成分生效日做 PIT 契约测试。缺少这些表时 market/index run 必须失败，不能退化为
+板块和 universe membership 生效日做 PIT 契约测试。缺少这些表时 market run 必须失败，不能退化为
 当前股票列表。
 
-### 12.7 四类 SampleProvider 实施面不完整
+### 12.7 SampleProvider 抽象过度
 
-`market`、`index`、`event`、`custom` 必须各有独立 Provider 和合成契约测试；Protocol 或最终
-验收清单不能替代实现任务。hybrid 作为 SampleSet 组合器单独处理，不让事件适配器承担全部
-样本语义。
+当前只有 market 需求，因此只实现具体 `MarketSampleProvider`。不创建 Protocol registry、kind enum、
+event/index/custom/hybrid 空类或 capability discovery；新样本类型只有在真实需求出现后另案设计。
 
 ### 12.8 历史行为可能冻结已知错误
 
@@ -549,13 +573,13 @@ Python dict 索引。通用路径使用 Arrow Dataset/Parquet predicate pushdown
 
 设计完成后的系统必须满足：
 
-- 同一个 CLI 能运行 market、index、event 和 custom 四类 SampleSet。
-- market/index 使用逐日 PIT universe，合成退市与调仓案例不出现幸存者偏差。
+- CLI 只运行 zer0share market universe + zer0factor 因子这一条路径，所有保留命令均无 `--csv`。
+- market 使用逐日 PIT universe，合成退市与调仓案例不出现幸存者偏差。
 - `qrsearch` 代码中不存在新的日频因子公式或可写因子存储。
 - 每个正式 run 使用固定 FeatureSnapshot，不读取可变 latest 因子。
 - 配置只能增加 manifest 延迟；随机抽样逐行核对时，因子 `available_at <= asof_time`。
 - split manifest 按 fold 证明训练与 OOS 标签区间没有禁止重叠，并列出 purge/embargo ID。
-- Iteration 1 的规范事件 contract 在约定容差内保持一致；不要求旧 API、CLI 或 YAML 存活。
+- Iteration 1 的正确性修复由底层统计/成交合成测试继续覆盖；event contract 随旧路径删除。
 - normative tests 覆盖 limit10/limit20、IC ties/NaN、停牌/退市、OHLC 双触发和复权事件；
   与历史行为冲突时以正确规则为准。
 - 三个仓库版本、数据指纹、因子 manifest 和试验次数均进入 lineage。
@@ -566,12 +590,12 @@ Python dict 索引。通用路径使用 Arrow Dataset/Parquet predicate pushdown
 ## 14. 决策摘要
 
 1. 采用“因子工厂 + 通用研究编排”分层，不做 `qrsearch` 内部大一统数据平台。
-2. 事件是 SampleSet，不是特殊因子表或专用 pipeline。
+2. SampleSet 固定来自 zer0share 逐日 universe；不为尚不存在的其他样本类型建立抽象。
 3. `zer0factor` 是唯一因子真源，`qrsearch` 只读版本化 FeatureSnapshot。
-4. 评估协议显式区分全市场截面、事件条件化和组合经济表现。
+4. 评估协议显式区分全市场截面和组合经济表现。
 5. 三个迭代顺序开发，Iteration 3 一次性切换；最终不保留兼容适配、双路由或旧版本 fallback。
 6. availability 由因子 manifest 掌权，研究配置只能增加延迟。
 7. 只冻结规范正确性；golden 不得冻结已知交易或统计错误。
-8. event/market 是当前交付；index/custom Provider、全局 FactorArtifact 和更完整 PIT DataContract
-   分别立项，不为它们预留空实现。
+8. market 是唯一当前交付；event/index/custom Provider、全局 FactorArtifact 和更完整 PIT DataContract
+   若出现真实需求再分别立项，不为它们预留空实现。
 9. 当前三个迭代不修改 zer0share/zer0factor；能力缺口由 qrsearch adapter 处理或另案申请上游变更。
