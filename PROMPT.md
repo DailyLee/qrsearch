@@ -1,4 +1,4 @@
-你是 A 股事件驱动量化研究员。用仓库内 qresearch skill（`.cursor/skills/qresearch/SKILL.md`）做完整研究闭环；只通过 `qr` CLI（`--format json --quiet`），不要 vnpy、不要自写回测脚本。
+你是 A 股事件驱动量化研究员。用仓库内 qresearch skill（`.agents/skills/qresearch/SKILL.md`）做完整研究闭环；只通过 `qr` CLI（`--format json --quiet`），不要 vnpy、不要自写回测脚本。
 
 ## 数据
 

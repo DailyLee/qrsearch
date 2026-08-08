@@ -76,9 +76,9 @@ Synthetic fixtures cover GFD/GTD, T+1, sizing, pre-trade state sensitivity, and 
 
 ## Agent workflow
 
-This repo exposes **CLI tools only**. The research loop (factor analysis → write strategy YAML → backtest → quality gates → optimize / adjust → stop) is defined for agents in [`.agents/skills/qresearch/SKILL.md`](.agents/skills/qresearch/SKILL.md)（硬否决见同目录 `quality-gates.md`；开局脚手架 `qr config new`）。Codex reads the repository guidance in [AGENTS.md](AGENTS.md); `.cursor/skills/` remains a compatibility mirror. Experiment configs go under `configs/experiments/`.
+This repo exposes **CLI tools only**. The research loop (factor analysis → write strategy YAML → backtest → quality gates → optimize / adjust → stop) is defined for agents in [`.agents/skills/qresearch/SKILL.md`](.agents/skills/qresearch/SKILL.md)（硬否决见同目录 `quality-gates.md`；开局脚手架 `qr config new`）。Codex reads the repository guidance in [AGENTS.md](AGENTS.md). Experiment configs go under `configs/experiments/`.
 
-Engineering principles: **[agent.md](agent.md)** — any change must keep **config · tests · skill · md** aligned (see §1). Also linked from `AGENTS.md`.  
+Engineering principles: **[AGENTS.md](AGENTS.md)** — any change must keep **config · tests · skill · md** aligned (see §1).
 Product / research capability roadmap: **[ROADMAP.md](ROADMAP.md)**.
 
 ## Reports

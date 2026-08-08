@@ -1,7 +1,7 @@
 # qresearch Roadmap
 
 定位：**事件驱动 A 股研究内核 + Agent CLI**（事件 CSV 进 → 因子/策略/回测/门禁 → 可选晋升与信号）。  
-不做第二套交易框架；行情继续只经 zer0share。工程纪律见 [agent.md](agent.md)（含配置·用例·skill·md 对齐）；研究闭环见 [`.agents/skills/qresearch/SKILL.md`](.agents/skills/qresearch/SKILL.md)（Cursor 镜像位于 `.cursor/skills/`）。
+不做第二套交易框架；行情继续只经 zer0share。工程纪律见 [AGENTS.md](AGENTS.md)（含配置·用例·skill·md 对齐）；研究闭环见 [`.agents/skills/qresearch/SKILL.md`](.agents/skills/qresearch/SKILL.md)。
 
 状态图例：`done` 已有 · `next` 近期优先 · `later` 中期 · `out` 明确不做（或仓外）。
 
@@ -37,7 +37,6 @@
 
 - `sample_profile.json`、因子白黑名单、ICIR / 分层收益
 - `hypothesis` → YAML / `meta.json`；结构门禁 vs 经济门禁（默认 min Sharpe / max DD）
-- 实现说明：`.cursor/plans/p0_p1_research_hardening.plan.md`
 
 **评估协议（done）**：`evaluation` 切分声明、多窗 OOS 角色、`mean_invested` 主路径披露、可选超额/IR 门禁。  
 铁律：实盘不判牛熊；研究用年份/角色说明评估公平性；stress holdout 差≠机械否决。  
@@ -75,7 +74,7 @@
 
 | 项 | 原因 |
 |----|------|
-| 引入 vnpy / 第二套回测引擎 | 边界与 [agent.md](agent.md) 硬约束 |
+| 引入 vnpy / 第二套回测引擎 | 边界与 [AGENTS.md](AGENTS.md) 硬约束 |
 | 仓内实现完整事件扫描器 | 数据与研究解耦；CSV/Parquet 契约即可 |
 | 为刷覆盖率堆 e2e | 默认同合成 panel；真实行情标 `e2e_local` |
 
@@ -103,5 +102,3 @@ workspace/
 4. **Agent 可编排**：新能力优先 CLI + JSON 信封，再补 skill 剧本。
 
 修订记录：随里程碑更新本文件状态列；大改同步 README「Layout / CLI map」。
-
-实现拆解（P0 样本/因子/门禁 + P1 敏感度/合成因子）：见 [`.cursor/plans/p0_p1_research_hardening.plan.md`](.cursor/plans/p0_p1_research_hardening.plan.md)。
