@@ -10,8 +10,8 @@ import polars as pl
 from qresearch.engines.data import vendor
 
 
-def test_load_daily_long_merges_historical_limits_without_future_factor_fill(monkeypatch, tmp_path):
-    """Catches losing daily limits or backfilling a factor from a future session."""
+def test_load_daily_long_scopes_limits_and_avoids_future_factor_fill(monkeypatch, tmp_path):
+    """Catches an all-market limit request or a factor backfill from the future."""
 
     class FakePro:
         def __init__(self) -> None:
@@ -44,9 +44,11 @@ def test_load_daily_long_merges_historical_limits_without_future_factor_fill(mon
         def adj_factor(self, *, ts_code: str, **_kwargs):
             return self.adj_data[self.adj_data["ts_code"] == ts_code].copy()
 
-        def stk_limit(self, **kwargs):
-            self.stk_limit_calls.append(kwargs)
-            return self.limit_data.copy()
+        def stk_limit(self, *, ts_code=None, **kwargs):
+            self.stk_limit_calls.append({"ts_code": ts_code, **kwargs})
+            if ts_code is None:
+                return self.limit_data.copy()
+            return self.limit_data[self.limit_data["ts_code"].isin(ts_code)].copy()
 
     pro = FakePro()
     expected_paths = []
@@ -94,6 +96,7 @@ def test_load_daily_long_merges_historical_limits_without_future_factor_fill(mon
     ]
     assert pro.stk_limit_calls == [
         {
+            "ts_code": ["000001.SZ", "000002.SZ"],
             "start_date": "20240102",
             "end_date": "20240103",
             "fields": "ts_code,trade_date,up_limit,down_limit",

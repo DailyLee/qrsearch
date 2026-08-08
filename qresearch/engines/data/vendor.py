@@ -168,6 +168,7 @@ def load_daily_long(
         raise VendorError("adj_factor empty")
 
     limit_df = pro.stk_limit(
+        ts_code=codes,
         start_date=start_s,
         end_date=end_s,
         fields="ts_code,trade_date,up_limit,down_limit",

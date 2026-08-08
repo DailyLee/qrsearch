@@ -90,10 +90,16 @@ def run_ops(
         live_ready = False
         warnings.append("signal_mode_without_state")
 
-    # narrow panel for the day
-    panel = load_price_panel(events, config, cache_dir=cache_dir)
+    # Include held names because due sells need the same historical-limit facts as buys.
+    panel = load_price_panel(
+        events,
+        config,
+        cache_dir=cache_dir,
+        extra_instruments=list(state.positions),
+    )
+    limitbook = LimitBook()
     allowed, rejects = select_buy_intents(
-        intents, state, config.portfolio, panel, session, LimitBook()
+        intents, state, config.portfolio, panel, session, limitbook
     )
 
     orders = []
@@ -121,6 +127,18 @@ def run_ops(
             )
             continue
         if session >= pos.exit_intent_date:
+            bar = panel.get(inst, session)
+            can_sell, reason = limitbook.can_sell_open(bar)
+            if not can_sell:
+                rejects.append(
+                    {
+                        "session": str(session),
+                        "instrument": inst,
+                        "reason": reason,
+                        "side": "sell",
+                    }
+                )
+                continue
             orders.append(
                 {
                     "asof": asof,
