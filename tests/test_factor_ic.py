@@ -26,6 +26,27 @@ def test_spearman_ic_perfect_and_short():
     assert np.isnan(spearman_ic(np.array([1.0, 2.0]), np.array([1.0, 2.0])))
 
 
+def test_spearman_ic_uses_average_ranks_for_ties():
+    x = np.array([1.0, 1.0, 2.0, 3.0])
+    y = np.array([1.0, 2.0, 2.0, 4.0])
+
+    assert spearman_ic(x, y) == pytest.approx(0.8333333333333335)
+
+
+def test_spearman_ic_drops_non_finite_pairs():
+    x = np.array([1.0, np.nan, 2.0, 3.0, np.inf])
+    y = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+
+    assert spearman_ic(x, y) == pytest.approx(1.0)
+
+
+def test_spearman_ic_returns_nan_when_non_finite_filter_leaves_too_few_pairs():
+    x = np.array([1.0, np.nan, np.inf, 2.0])
+    y = np.array([1.0, 2.0, 3.0, np.nan])
+
+    assert np.isnan(spearman_ic(x, y))
+
+
 def _mono_panel(n: int = 12) -> tuple[PricePanel, list[date]]:
     start = date(2024, 1, 2)
     sessions = []

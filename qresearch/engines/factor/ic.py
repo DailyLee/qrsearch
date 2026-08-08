@@ -34,11 +34,30 @@ def _fwd_return(panel: PricePanel, instrument: str, entry: date, horizon: int) -
     return c1 / c0 - 1.0
 
 
+def _average_ranks(values: np.ndarray) -> np.ndarray:
+    """Return one-based average ranks, assigning equal values their shared rank."""
+    order = np.argsort(values, kind="stable")
+    ranks = np.empty(len(values), dtype=float)
+    sorted_values = values[order]
+    start = 0
+    while start < len(values):
+        end = start + 1
+        while end < len(values) and sorted_values[end] == sorted_values[start]:
+            end += 1
+        ranks[order[start:end]] = (start + 1 + end) / 2.0
+        start = end
+    return ranks
+
+
 def spearman_ic(x: np.ndarray, y: np.ndarray) -> float:
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    finite = np.isfinite(x) & np.isfinite(y)
+    x, y = x[finite], y[finite]
     if len(x) < 3:
         return float("nan")
-    rx = x.argsort().argsort().astype(float)
-    ry = y.argsort().argsort().astype(float)
+    rx = _average_ranks(x)
+    ry = _average_ranks(y)
     rx -= rx.mean()
     ry -= ry.mean()
     denom = np.sqrt((rx**2).sum() * (ry**2).sum())
