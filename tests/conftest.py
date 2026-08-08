@@ -48,6 +48,8 @@ def panel(sessions: list[date]) -> PricePanel:
                     "close": round(c, 2),
                     "vol": 1e5,
                     "amount": 1e6,
+                    "up_limit": round(o * 1.1, 2),
+                    "down_limit": round(o * 0.9, 2),
                 }
             )
             px = c

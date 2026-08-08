@@ -136,13 +136,12 @@ def test_sell_blocked_limit_down_sets_pending(panel: PricePanel, events: pl.Data
     exit_day = sessions[5]  # matches fixture exit_intent for first event
     assert exit_day > buy_session
 
-    prev = panel.prior_close("AAA001.SZ", exit_day)
-    assert prev is not None
     bar = dict(panel._by_key[("AAA001.SZ", exit_day)])
-    bar["open"] = round(prev * 0.9, 2)  # limit-down open
+    bar["open"] = 8.76
     bar["high"] = bar["open"]
     bar["low"] = bar["open"]
     bar["close"] = bar["open"]
+    bar["down_limit"] = 8.76
     panel._by_key[("AAA001.SZ", exit_day)] = bar
 
     res = run_backtest(ev, panel, cfg)
@@ -300,15 +299,14 @@ def test_deferred_exit_fills_after_limit_down_block(panel: PricePanel, events: p
     fill_day = panel.next_session(stop_day, 1)
     assert stop_day and fill_day
 
-    prev_stop = panel.prior_close("AAA001.SZ", stop_day)
-    assert prev_stop is not None
     stop_bar = dict(panel._by_key[("AAA001.SZ", stop_day)])
     # limit-down open + low through stop → trigger stop but cannot sell
-    ld = round(prev_stop * 0.9, 2)
+    ld = 8.76
     stop_bar["open"] = ld
     stop_bar["high"] = ld
     stop_bar["low"] = min(ld, round(entry_px * 0.9, 2))
     stop_bar["close"] = ld
+    stop_bar["down_limit"] = ld
     panel._by_key[("AAA001.SZ", stop_day)] = stop_bar
 
     # next day: tradable, but do NOT re-trigger stop (low above stop)

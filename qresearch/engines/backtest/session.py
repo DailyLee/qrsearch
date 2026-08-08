@@ -312,8 +312,7 @@ def _process_exits(
         if session <= pos.entry_session:
             continue
         bar = panel.get(inst, session)
-        prev = panel.prior_close(inst, session)
-        can_sell, why = limitbook.can_sell_open(bar, prev)
+        can_sell, why = limitbook.can_sell_open(bar)
         # determine reason by priority
         reason = pos.pending_exit_reason
         px_open = float(bar["open"]) if bar else None

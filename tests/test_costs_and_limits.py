@@ -47,20 +47,54 @@ def test_commission_and_costs_with_slip_and_stamp():
     assert sell_cost(notional, costs) == pytest.approx(30.0)  # + stamp
 
 
-def test_limitbook_buy_sell_gates():
-    lb = LimitBook(up_pct=0.1, down_pct=0.1)
-    prev = 10.0
-    assert lb.limit_up_price(prev) == 11.0
-    assert lb.limit_down_price(prev) == 9.0
+def test_limitbook_rejects_buy_at_historical_up_limit_not_percentage_heuristic():
+    """Changing a historical limit price must change fill eligibility exactly."""
+    lb = LimitBook()
+    bar = {"open": 12.34, "vol": 100, "up_limit": 12.34, "down_limit": 8.76}
 
-    assert lb.can_buy_open(None, prev) == (False, "suspended")
-    assert lb.can_buy_open({"open": 11.0, "vol": 100}, prev) == (False, "limit_up")
-    assert lb.can_buy_open({"open": 10.5, "vol": 100}, prev) == (True, "ok")
-    assert lb.can_buy_open({"open": 10.5, "vol": 0}, prev) == (False, "suspended")
+    assert lb.can_buy_open(bar) == (False, "limit_up")
 
-    assert lb.can_sell_open({"open": 9.0, "vol": 100}, prev) == (False, "limit_down")
-    assert lb.can_sell_open({"open": 9.5, "vol": 100}, prev) == (True, "ok")
-    assert lb.can_sell_open(None, prev) == (False, "suspended")
+
+def test_limitbook_rejects_sell_at_historical_down_limit():
+    lb = LimitBook()
+    bar = {"open": 8.76, "vol": 100, "up_limit": 12.34, "down_limit": 8.76}
+
+    assert lb.can_sell_open(bar) == (False, "limit_down")
+
+
+def test_limitbook_rejects_zero_volume_as_suspended():
+    lb = LimitBook()
+    bar = {"open": 10.0, "vol": 0, "up_limit": 11.0, "down_limit": 9.0}
+
+    assert lb.can_buy_open(bar) == (False, "suspended")
+
+
+def test_limitbook_rejects_missing_bar_as_data_gap():
+    lb = LimitBook()
+
+    assert lb.can_buy_open(None) == (False, "data_gap")
+    assert lb.can_sell_open(None) == (False, "data_gap")
+
+
+def test_limitbook_rejects_null_historical_limit_data():
+    lb = LimitBook()
+
+    assert lb.can_buy_open({"open": 10.0, "vol": 100, "up_limit": None, "down_limit": 9.0}) == (
+        False,
+        "missing_limit_data",
+    )
+    assert lb.can_sell_open({"open": 10.0, "vol": 100, "up_limit": 11.0, "down_limit": None}) == (
+        False,
+        "missing_limit_data",
+    )
+
+
+def test_limitbook_allows_regular_open_with_historical_limits():
+    lb = LimitBook()
+    bar = {"open": 12.33, "vol": 100, "up_limit": 12.34, "down_limit": 8.76}
+
+    assert lb.can_buy_open(bar) == (True, "ok")
+    assert lb.can_sell_open(bar) == (True, "ok")
 
 
 def test_portfolio_state_nav_and_names():

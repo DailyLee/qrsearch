@@ -61,8 +61,7 @@ def select_buy_intents(
             )
             continue
         bar = panel.get(it.instrument, session)
-        prev = panel.prior_close(it.instrument, session)
-        ok, why = limitbook.can_buy_open(bar, prev)
+        ok, why = limitbook.can_buy_open(bar)
         if not ok:
             rejects.append(
                 {"session": str(session), "instrument": it.instrument, "reason": why}
