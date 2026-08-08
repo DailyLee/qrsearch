@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
@@ -167,6 +168,30 @@ def _cache_key(
     return f"pit_raw_v2_{adj_mode}_{start.isoformat()}_{end.isoformat()}_{uni}"
 
 
+def _cached_fingerprint(sidecar_path: Path, cache_key: str) -> str | None:
+    """Return a verified source fingerprint from a price-cache sidecar."""
+    try:
+        metadata = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(metadata, dict):
+        return None
+    fingerprint = metadata.get("data_fingerprint")
+    if metadata.get("cache_key") != cache_key or not isinstance(fingerprint, str):
+        return None
+    return fingerprint
+
+
+def _write_cache_sidecar(sidecar_path: Path, cache_key: str, fingerprint: str) -> None:
+    """Atomically publish price-cache lineage after its parquet is written."""
+    temporary_path = sidecar_path.with_name(f"{sidecar_path.name}.tmp")
+    temporary_path.write_text(
+        json.dumps({"data_fingerprint": fingerprint, "cache_key": cache_key}),
+        encoding="utf-8",
+    )
+    temporary_path.replace(sidecar_path)
+
+
 def load_price_panel(
     events: pl.DataFrame,
     config: ResearchConfig,
@@ -198,14 +223,17 @@ def load_price_panel(
         cache_dir.mkdir(parents=True, exist_ok=True)
         key = _cache_key(stock_codes, start, end, adj_mode)
         cache_path = cache_dir / f"{key}.parquet"
-        if cache_path.exists():
+        sidecar_path = cache_dir / f"{key}.meta.json"
+        cached_fingerprint = _cached_fingerprint(sidecar_path, key)
+        if cache_path.exists() and cached_fingerprint is not None:
             bars = pl.read_parquet(cache_path)
-            fp = "cache_hit"
+            fp = cached_fingerprint
         else:
             bars, fp = vendor.load_daily_long(
                 stock_codes, start, end, adj=adj_mode
             )
             bars.write_parquet(cache_path)
+            _write_cache_sidecar(sidecar_path, key, fp)
         if index_codes:
             idx_bars = vendor.load_indices_long(index_codes, start, end)
             if idx_bars.height:
