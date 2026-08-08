@@ -4,7 +4,11 @@ Agent research loop lives in [SKILL.md](SKILL.md); phases: [factor-analysis.md](
 
 ## Prices / 前复权
 
-zer0share has **no** as-of qfq API (`pro_bar(adj=qfq)` is window-end). qresearch preloads raw `daily` + `adj_factor` once per study, then applies PIT qfq at read time: `price[t|T] = raw[t] * adj[t] / adj[T]` (`PricePanel.get(..., asof=T)`). Cache prefix `pit_raw_v1_*` — delete old `workspace/cache/prices` if stale.
+zer0share has **no** as-of qfq API (`pro_bar(adj=qfq)` is window-end). qresearch preloads raw `daily` + `adj_factor` once per study, then applies PIT qfq at read time: `price[t|T] = raw[t] * adj[t] / adj[T]` (`PricePanel.get(..., asof=T)`). Price-panel cache prefix is `pit_raw_v2_*`; its `.meta.json` sidecar retains the source `data_fingerprint`. Older `pit_raw_v1_*` entries lack the historical-limit schema and are not cache hits; use `qr data clear-cache` only when a manual cache reset is needed.
+
+## Daily open execution / historical limits
+
+For a daily open fill, qresearch uses zer0share's **same-session historical** `up_limit` and `down_limit`: an open touching limit-up rejects a buy, an open touching limit-down rejects a sell, and a suspended session does not fill. It does not model queue position, limit release timing, or the order book. Factor IC and theoretical forward-return calculations do **not** receive these fill filters; they are theoretical price measures, whereas backtests apply the execution constraint.
 
 ## Layout
 

@@ -17,7 +17,7 @@
 | 因子检验（事件级） | done | Rank IC、compare、shuffle placebo |
 | 因子深度诊断 | done | 白黑名单、样本剖面、ICIR、分层收益 |
 | 策略 YAML 定义 | done | signals / portfolio / risk / execution / composite |
-| 日频回测与约束 | done | GFD/GTD、T+1、涨跌停启发式、成本 |
+| 日频回测与约束 | done | GFD/GTD、T+1、历史 `up_limit` / `down_limit` 开盘成交约束、成本 |
 | WF / 过拟合 / PIT 披露 | done | walk-forward、deflated Sharpe、gates、pit_audit |
 | 参数优化 | done | `optimize` 单特征分位；`sweep` 多 filter / `between` 边界；`apply-best` 写新 YAML |
 | 执行/风控敏感度 | done | `pipeline sensitivity` 成本×组合旋钮；行含 `mean_invested` |
@@ -42,6 +42,8 @@
 铁律：实盘不判牛熊；研究用年份/角色说明评估公平性；stress holdout 差≠机械否决。  
 
 **区间因子（done）**：`shape`∈u/inv_u/hump → `between` filter + 带内单调 rank；全样本 IC≈0 不机械否决。  
+
+**历史涨跌停成交契约（done）**：日频开盘成交读取 zer0share 当日 `up_limit` / `down_limit`；开盘触及涨停不买、触及跌停不卖，停牌不成交。不模拟排队、开板时点或盘口。因子 IC / 理论 forward return 不使用这些成交过滤，回测单独衡量可成交结果。
 
 仍 later：行业/市值分布深化、前视字段清单扩展、自动 regime 分类器（不做年份标签替代）。
 

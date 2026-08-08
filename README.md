@@ -53,6 +53,10 @@ Exit codes: `0` ok, `2` config, `3` data, `4` gate blocked, `5` dependency missi
 | Planned entry/exit | `entry_intent_date` / `exit_intent_date` |
 | PIT adjustment | `adjustment.as_of` |
 
+## Daily open execution contract
+
+Daily backtests fill at the open using zer0share's **same-session historical** `up_limit` / `down_limit`: an open at the limit-up is not buyable, an open at the limit-down is not sellable, and suspended sessions do not fill. The model does not simulate order queues, limit-open release timing, or the order book. Factor IC and theoretical forward returns do **not** apply these fill filters; they measure the price relationship, while the backtest separately measures executable results.
+
 ## Layout
 
 ```
