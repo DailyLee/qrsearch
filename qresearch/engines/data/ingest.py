@@ -3,17 +3,27 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Iterable
 
 import polars as pl
 
-from qresearch.config.models import IngestConfig, ResearchConfig
-
-
 class IngestError(ValueError):
     """Hard-fail ingest error."""
+
+
+@dataclass(frozen=True)
+class _EventIngestOptions:
+    instrument: str = "code"
+    decision_date: str | None = None
+    entry_intent_date: str = "buy_date"
+    exit_intent_date: str = "sell_date"
+    feature_aliases: dict[str, str] | None = None
+    coalesce: str = "last"
+    date_formats: tuple[str, ...] = ("%Y/%m/%d", "%Y-%m-%d", "%Y/%m/%d", "%Y%m%d")
+    board: str = "limit10"
 
 
 _CODE_RE = re.compile(r"^(?:(?P<ex>sh|sz|bj)\.)?(?P<code>\d{6})(?:\.(?P<sfx>SH|SZ|BJ|SSE|SZSE))?$", re.I)
@@ -133,9 +143,9 @@ def _coalesce_numeric(text: str, policy: str) -> float | None:
 
 def load_events(
     paths: str | Path | Iterable[str | Path],
-    config: ResearchConfig | IngestConfig | None = None,
+    config: _EventIngestOptions | None = None,
 ) -> pl.DataFrame:
-    ingest = config.ingest if isinstance(config, ResearchConfig) else (config or IngestConfig())
+    ingest = config or _EventIngestOptions()
     files = resolve_event_paths(paths)
     frames: list[pl.DataFrame] = []
     for fp in files:
@@ -157,10 +167,8 @@ def load_events(
     return df.sort(["entry_intent_date", "instrument"])
 
 
-def _normalize_frame(raw: pl.DataFrame, ingest: IngestConfig, source: str) -> pl.DataFrame:
+def _normalize_frame(raw: pl.DataFrame, ingest: _EventIngestOptions, source: str) -> pl.DataFrame:
     cols = {c.lower(): c for c in raw.columns}
-    alias = ingest.aliases
-
     def col(name: str) -> str:
         # exact then casefold
         if name in raw.columns:
@@ -170,10 +178,10 @@ def _normalize_frame(raw: pl.DataFrame, ingest: IngestConfig, source: str) -> pl
             return cols[key]
         raise IngestError(f"missing column {name!r} in {source}; have={list(raw.columns)}")
 
-    inst_col = col(alias.instrument)
-    entry_col = col(alias.entry_intent_date)
-    exit_col = col(alias.exit_intent_date)
-    decision_src = alias.decision_date
+    inst_col = col(ingest.instrument)
+    entry_col = col(ingest.entry_intent_date)
+    exit_col = col(ingest.exit_intent_date)
+    decision_src = ingest.decision_date
     decision_col = col(decision_src) if decision_src else entry_col
 
     instruments = []
@@ -204,7 +212,7 @@ def _normalize_frame(raw: pl.DataFrame, ingest: IngestConfig, source: str) -> pl
 
     # feature columns: all other numeric-ish columns + mapped aliases
     reserved = {inst_col, entry_col, exit_col, decision_col}
-    feature_map = dict(alias.features)
+    feature_map = dict(ingest.feature_aliases or {})
     # auto-map common names
     for c in raw.columns:
         if c in reserved:
@@ -255,10 +263,10 @@ def _normalize_frame(raw: pl.DataFrame, ingest: IngestConfig, source: str) -> pl
     return out
 
 
-def validate_events(paths: str | Path | Iterable[str | Path], config: ResearchConfig | None = None) -> dict:
-    ingest = config.ingest if isinstance(config, ResearchConfig) else IngestConfig()
+def validate_events(paths: str | Path | Iterable[str | Path]) -> dict:
+    ingest = _EventIngestOptions()
     # Count boards before filter (same parse path, board=all) for disclosure.
-    all_cfg = ingest.model_copy(update={"board": "all"})
+    all_cfg = replace(ingest, board="all")
     raw = load_events(paths, all_cfg)
     n_limit20 = int(raw.filter(_limit20_mask()).height)
     n_limit10 = int(raw.height - n_limit20)

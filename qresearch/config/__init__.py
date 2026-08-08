@@ -5,7 +5,14 @@ from typing import Any
 
 import yaml
 
-from qresearch.config.models import AppSettings, ResearchConfig
+from qresearch.config.models import (
+    AppSettings,
+    FeatureRefConfig,
+    FeatureSourceConfig,
+    LabelConfig,
+    ResearchConfig,
+    SampleConfig,
+)
 
 # Set by CLI global --board (and similar) so pipeline/ops load paths pick it up.
 _CLI_CONFIG_OVERRIDES: dict[str, Any] = {}
@@ -54,7 +61,11 @@ def get_settings() -> AppSettings:
 
 __all__ = [
     "AppSettings",
+    "FeatureRefConfig",
+    "FeatureSourceConfig",
+    "LabelConfig",
     "ResearchConfig",
+    "SampleConfig",
     "load_research_config",
     "load_yaml",
     "get_settings",

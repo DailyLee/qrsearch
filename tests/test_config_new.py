@@ -12,7 +12,15 @@ from qresearch.engines.experiment.scaffold import ScaffoldError, scaffold_experi
 
 def _write_template(path: Path, *, with_signals: bool = False, with_eval: bool = True) -> None:
     data: dict = {
-        "ingest": {"board": "limit10", "aliases": {"instrument": "code"}},
+        "sample": {
+            "universe": "a_share",
+            "start_date": "2024-01-01",
+            "end_date": "2024-12-31",
+        },
+        "features": {
+            "provider": "zer0factor",
+            "refs": [{"name": "daily_return_ma5", "availability_lag_sessions": 0}],
+        },
         "signals": {
             "filters": (
                 [{"field": "features.box_quality", "op": "ge", "value": 0.94}]
