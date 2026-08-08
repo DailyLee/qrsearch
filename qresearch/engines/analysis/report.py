@@ -794,9 +794,13 @@ def _load_config_snapshot(run_dir: Path) -> dict[str, Any] | None:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
-def load_run_artifacts(run_dir: Path) -> dict[str, Any]:
+def load_run_artifacts(run_dir: Path, *, role: str | None = None) -> dict[str, Any]:
     run_dir = Path(run_dir)
-    art = run_dir / "artifacts"
+    base_art = run_dir / "artifacts"
+    meta = _load_json(run_dir / "meta.json") or {}
+    selected_role = role or meta.get("pipeline_role")
+    scoped_art = base_art / "backtests" / str(selected_role) if selected_role else base_art
+    art = scoped_art if scoped_art.is_dir() else base_art
     trades_path = art / "trades.csv"
     equity_path = art / "equity.csv"
     ic_path = art / "ic_summary.csv"
@@ -807,7 +811,6 @@ def load_run_artifacts(run_dir: Path) -> dict[str, Any]:
     metrics = _load_json(art / "metrics.json") or {}
     wf = _load_json(art / "wf_folds.json")
     pit_audit = _load_json(art / "pit_audit.json")
-    meta = _load_json(run_dir / "meta.json") or {}
     cfg = _load_config_snapshot(run_dir) or {}
     from qresearch.config import get_settings
     from qresearch.engines.experiment.decision_log import load_decisions_for_report
@@ -865,9 +868,10 @@ def build_conclusion_from_run(
     holdout_run: str | None = None,
     holdout_stress_run: str | None = None,
     full_run: str | None = None,
+    role: str | None = None,
 ) -> dict[str, Any]:
     run_dir = Path(run_dir)
-    loaded = load_run_artifacts(run_dir)
+    loaded = load_run_artifacts(run_dir, role=role)
     cfg = loaded["config"] or {}
     meta = loaded["meta"] or {}
     existing = base
@@ -935,6 +939,8 @@ def build_conclusion_from_run(
             "zer0share_fingerprint": meta.get("zer0share_fingerprint"),
             "zer0factor_revision": meta.get("zer0factor_revision"),
             "execution_model": meta.get("execution_model"),
+            "st_filter_status": meta.get("st_filter_status"),
+            "pipeline_role": role or meta.get("pipeline_role"),
         },
     }
     from qresearch.config import get_settings
@@ -1030,6 +1036,7 @@ def write_report(
     holdout_run: str | None = None,
     holdout_stress_run: str | None = None,
     full_run: str | None = None,
+    role: str | None = None,
 ) -> tuple[Path, Path]:
     report_dir = Path(report_dir)
     report_dir.mkdir(parents=True, exist_ok=True)
@@ -1043,6 +1050,7 @@ def write_report(
             holdout_run=holdout_run,
             holdout_stress_run=holdout_stress_run,
             full_run=full_run,
+            role=role,
         )
     else:
         enriched = enrich_conclusion(conclusion)
@@ -1079,6 +1087,7 @@ def write_report_from_run(
     holdout_run: str | None = None,
     holdout_stress_run: str | None = None,
     full_run: str | None = None,
+    role: str | None = None,
 ) -> tuple[Path, Path]:
     run_dir = Path(run_dir)
     report_dir = run_dir / "report"
@@ -1092,4 +1101,5 @@ def write_report_from_run(
         holdout_run=holdout_run,
         holdout_stress_run=holdout_stress_run,
         full_run=full_run,
+        role=role,
     )

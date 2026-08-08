@@ -192,3 +192,25 @@ def test_materialize_drops_last_session_without_effective_date_and_records_linea
     assert isinstance(samples.manifest["zer0share_data_fingerprint"], str)
     assert "latest" not in samples.manifest
     assert "cache_hit" not in samples.manifest
+
+
+def test_materialize_records_non_full_st_filter_status(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    monkeypatch.delenv("ZER0SHARE_DATA", raising=False)
+    monkeypatch.setattr(
+        "qresearch.research.providers.market.get_settings",
+        lambda: SimpleNamespace(data_dir=lambda: tmp_path),
+    )
+    meta = tmp_path / "stock" / "universe" / "build_meta"
+    meta.mkdir(parents=True)
+    for raw_date, status in (("20240102", "full"), ("20240103", "listed_only"), ("20240104", "full"), ("20240105", "full")):
+        (meta / f"date={raw_date}.json").write_text(
+            '{"st_filter_status":"' + status + '"}', encoding="utf-8"
+        )
+
+    samples = MarketSampleProvider(
+        FakeLocalPro([{"trade_date": "20240102", "universe": "univ_research_base", "ts_code": "000001.SZ"}]),
+        _calendar(),
+    ).materialize(_config())
+
+    assert samples.manifest["st_filter_status"] == "listed_only"
+    assert samples.manifest["st_filter_status_by_date"]["2024-01-03"] == "listed_only"

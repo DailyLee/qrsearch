@@ -44,16 +44,19 @@ def exit_reason_pnl_groups(trades: list[dict[str, Any]]) -> list[dict[str, Any]]
     return rows
 
 
-def analyze_trades_run(run_dir: Path) -> dict[str, Any]:
+def analyze_trades_run(run_dir: Path, *, role: str | None = None) -> dict[str, Any]:
     run_dir = Path(run_dir)
     if not run_dir.exists():
         raise FileNotFoundError(f"missing run dir {run_dir}")
 
-    trades_path = run_dir / "artifacts" / "trades.csv"
-    equity_path = run_dir / "artifacts" / "equity.csv"
-    rejects_path = run_dir / "artifacts" / "rejects_summary.json"
-    yearly_path = run_dir / "artifacts" / "yearly_metrics.json"
-    metrics_path = run_dir / "artifacts" / "metrics.json"
+    art = run_dir / "artifacts"
+    if role is not None:
+        art = art / "backtests" / role
+    trades_path = art / "trades.csv"
+    equity_path = art / "equity.csv"
+    rejects_path = art / "rejects_summary.json"
+    yearly_path = art / "yearly_metrics.json"
+    metrics_path = art / "metrics.json"
 
     trades_rows: list[dict[str, Any]] = []
     if trades_path.exists():
@@ -124,7 +127,7 @@ def analyze_trades_run(run_dir: Path) -> dict[str, Any]:
         "rejects_total": reject_stats.get("total"),
         "yearly": yearly_summary,
     }
-    out_path = run_dir / "artifacts" / "trades_diagnostics.json"
+    out_path = art / "trades_diagnostics.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(diag, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     return {

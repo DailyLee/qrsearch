@@ -1,126 +1,19 @@
-# 质量闸门（Quality gates）
+# Quality gates
 
-入口：[SKILL.md](SKILL.md)。本文件是 **Agent 强制否决表**：CLI 信封里的 `best_value` / `promotable` **不等于**可定稿。  
-阈值一律用**相对量**（相对 `gates.min_trades`、事件池、退出份额）；**禁止**在此文件或其它专章写死可抄的止损/止盈/特征阈值。
+## Automatically enforced
 
-及格线（夏普、年化等）只来自当次 `evaluation` + 用户声明，不内置进 skill。
+- config exactly matches the frozen run;
+- factor screening completed before any pipeline run;
+- selected temporal role exists and has rows;
+- optimize/sweep/sensitivity use only `train`;
+- market promotion has frozen factor/universe lineage and `st_filter_status=full`.
 
-## 符号（可执行定义）
+## Mandatory human review before champion or promotion
 
-| 符号 | 定义 |
-|------|------|
-| `M` | `gates.min_trades`（YAML；缺省按配置模型默认） |
-| `Y_all` | `sample_profile.years` 中纳入本次研究的自然年个数 |
-| `Y_train` | `evaluation.train_years` 年数（至少按自然年计数） |
-| `Y_validate` | `evaluation.validate_years` 年数（可 0） |
-| `Y_holdout` | `evaluation.holdouts` 中 `role=final` 的自然年个数 |
-| `N_events` | 本轮 train ingest 后事件数（`sample_profile.n_events`） |
-| `N_holdout` | holdout final 窗 research 的 `sample_profile.n_events` |
-| `N_kept` | 硬过滤后保留事件数（`ranked_events` 行数，或 sweep 行的 `n_events_kept`） |
-| `keep_frac` | `N_kept / N_events` |
-| `N_sells` | `analyze trades` 卖出笔数 |
-| `share(r)` | 退出原因 `r` 占总卖出份额（`exit_reasons[].share`） |
-| `pnl_sum(r)` | 退出原因 `r` 的盈亏合计（若信封有分组） |
-| `I` | `mean_invested`（`1 - cash/nav`） |
-| `K_density` | 密度系数，默认 **3** |
-| `K_holdout` | holdout 事件厚度系数，默认 **2** |
-| `N_kept_min` | `max(M, K_density * M * max(Y_train, 1))` |
-| `N_holdout_min` | `max(M, K_holdout * M)` |
-| `S_tp_ok` | 若配置了非空 `take_profit`：通过条件为 **OR**——`share(take_profit) ≥ 0.15`，或（存在 `max_hold` 退出时）`share(take_profit) ≥ share(max_hold) / 3`；未配置 TP 则本条不适用 |
-| `S_stop_bad` | 已配置非空 `take_profit` 时：`share(stop) > 0.45` **且** `share(take_profit) < 0.10` |
-| `I_floor` | 当用户目标含年化或绝对收益时：要求 `I ≥ 0.25`；否则不强制（仍须披露） |
+1. Train/validate/final roles are temporally disjoint and final was not used in selection.
+2. Candidate has sufficient observations/trades, stable results across time, and plausible economic rationale.
+3. Costs, capacity, holding, stop/take assumptions, invested exposure, drawdown, turnover, and rejection reasons are reviewed.
+4. Validate and final runs use the same factor refs, signal, execution, risk, and portfolio choices selected on train.
+5. `st_filter_status` is full; otherwise record the limitation and do not promote.
 
-## 定稿定义
-
-配置可称「完整策略 / 执行已定稿 / champion」**当且仅当**：
-
-1. 信号层有因子证据（decision `factor_analysis` + `strategy_design`）；  
-2. 执行/组合层经过 sensitivity（或用户书面跳过并声明模板）；  
-3. 样本切分过 G9*（正式 train 厚度、final holdout、`--csv` 对齐；validate 或 `split_no_validate`）；  
-4. 拟采用格与冻结 YAML 均通过下文适用闸门；  
-5. 对应 `study decision` 已落盘（含否决过的更高夏普格，若有）。
-
-**信封 `best_params.best_value` 只是候选，不是定稿。**
-
-## 闸门表
-
-| ID | 何时检查 | 触发条件 | 动作 |
-|----|----------|----------|------|
-| G0 | 开局 / `strategy_design` | 用户或数据声明退出日「仅供参考 / 扫描标签」 | `risk.exit_priority` **不得含** `exit_intent`；decision 写明 |
-| G0b | 首轮 train `analyze trades` 后 | 未澄清且 `share(exit_intent)` 过高（经验：`> 0.30` 或为最大退出份额） | **停手**：澄清语义或去掉 `exit_intent`；禁止继续 optimize/sensitivity |
-| G1 | 信号 YAML / sweep 后 | `N_kept < N_kept_min` 或 `keep_frac` 极低且硬过滤依赖近稀有二元字段 | **不得**在含年化/绝对收益目标的 study 标唯一 champion；可标 `signal_sparse` 旁路（decision 写 keep 比例与经济含义）；优先改 `rank_by`/composite 而非硬 `eq` |
-| G2 | 候选 YAML 的 train research + `analyze trades` 后 | 已配置非空 `take_profit` 且不满足 `S_tp_ok` | **否决该格**（纸面盈亏比）；重搜 take/hold 或取消无效 TP |
-| G3 | 同上 | 触发 `S_stop_bad` | **否决该格**（止损收割机）；重搜 |
-| G4 | 同上 | 主盈利来自某退出类型（`pnl_sum` 最大） | decision **必须点名**；若主盈利是 `max_hold` 却声称「止盈止损定稿」→ 违规，改正表述或重搜 |
-| G5 | 标 champion / 向用户报「达标策略」前 | 用户目标含年化或绝对收益，且 `I < I_floor` | **不得**标 champion；可报「高夏普稀疏信号旁路」并给 invested |
-| G6 | 选格时 | 用户同时要求夏普与年化（或 evaluation 主指标+用户附加年化） | 选格表须并列夏普、年化（或 total_return）、`I`；**禁止**只按夏普 `best_value` 定稿 |
-| G7 | sensitivity 定稿 | 网格未含成本乘数维，或入选格在 cost 加压下相对基准成本塌缩不可交代 | **不得**定稿；补跑含 cost 维的敏感性 |
-| G8 | 板块 | 在 `all` 上得出的信号直接用于单一涨跌停板，或混板结论 | 否决；换板 = 新实验文件 / 新 study |
-| G9 | 写 `evaluation` / 首次正式 optimize\|sweep\|sensitivity 前 | `Y_train < 2` | **不得**标正式搜参；仅探索（decision 标 `split_exploratory`）；禁止据此 promote/champion |
-| G9b | 同上 / 标 champion 前 | 无 `role=final` 的 holdout，或 `Y_holdout < 1` | **不得**标 champion / 声称 OOS 达标；先从 `sample_profile.years` 划出终测年 |
-| G9c | holdout final research 后、标 champion 前 | `N_holdout < N_holdout_min` | **不得**标唯一 champion；可标 `split_thin_holdout` 旁路并披露事件数 |
-| G9d | `Y_all ≥ 4` 且拟正式搜参 / 定稿 | `Y_validate = 0` 且无用户书面跳过 | **不得**定稿；补 validate 窗，或 decision 写 `split_no_validate` + 用户同意 |
-| G9e | 每次按角色跑 research / 搜参 | `--csv` 年份集合⊈该角色 `evaluation` 声明（train 含 holdout 年等） | **停手**重跑；声明≠引擎强制，Agent 必须自己对齐 |
-
-失败时：一次只回退**一类**旋钮（信号 **或** 执行/组合），写 decision，禁止联乘重扫。
-
-## 多策略 book 闸门（P*）
-
-何时开腿 / 何时定稿动机见 [multi-strategy-portfolio.md](multi-strategy-portfolio.md) §0.4。  
-下列闸门在 **组合层** 检查；**不替代**各袖子的 G0–G8。
-
-| ID | 何时检查 | 触发条件 | 动作 |
-|----|----------|----------|------|
-| P0 | 拟写 book / 纸面合成前 | 任一拟入书袖子未过适用单策略闸门，或未钉死配置/包 | **禁止**定稿 book；回单腿闭环 |
-| P1 | 同上 | 跨袖子 `ingest.board` 不一致 | 否决（对齐 G8）；不得混板 book |
-| P2 | 权重 / book 清单 | 权重和非法；来自 book 层网格或组合净值拧参；再平衡规则或共享约束未声明（约束可为 null，但须明示） | 否决；权重仅用户给定或单一简单规则且落 decision |
-| P3 | 合成评估 | 未并列分腿 Sharpe/ann/`mean_invested`/退出结构；或未披露相关/同跌且未标 `correlation_unknown` | 不得称 book 已评估完备；不得称「分散组合」 |
-| P4 | 向用户报「组合策略」 | 缺旁路标签 `book_paper_only` | 必须补标签；禁止冒充实盘完备 |
-| P5 | 动机 / 交叉污染 | 澄清为 `stay_single`，或仅阈值/执行旋钮分歧却开多腿；或用组合期表现回头改任一袖子 YAML/网格 | 退出组合层 / 新假设新 study |
-
-## 旁路标签（允许披露，不可冒充完整策略）
-
-| 标签 | 含义 | 对用户必须说明 |
-|------|------|----------------|
-| `signal_sparse` | **触发 G1**（未达密度下限），边沿或可但不可支撑年化目标 | keep 比例、为何不扩池 |
-| `execution_template` | 未跑 sensitivity 或未过 G2–G4/G7 | 「执行层仍为模板」 |
-| `metric_sidecar` | 单指标好看但未过 G5/G6 | 并列未达标目标 |
-| `split_exploratory` | **G9**：`Y_train < 2`，仅探索搜参 | 非正式；不可 promote/champion |
-| `split_thin_holdout` | **G9c**：holdout 事件过薄 | `N_holdout` vs `N_holdout_min`；结论不稳 |
-| `split_no_validate` | **G9d**：`Y_all≥4` 仍无 validate，用户书面跳过 | 嵌套冻结窗缺失 |
-| `book_paper_only` | 账户外纸面合成（无共享现金/统一 pretrade） | 分腿指标并列；非实盘完备 |
-| `correlation_unknown` | 未做相关/同跌分析 | 组合分散结论不可靠 |
-| `sleeve_incomplete` | 拟披露的分腿对比中含 `execution_template` / `signal_sparse` 袖子 | 不得把该书标为可实盘 book |
-
-## `apply-best` 强制流程
-
-网格信封通常**不含**完整退出结构；因此允许「先落盘候选、再闸门验收」，但**验收前不得称定稿/champion**：
-
-```
-候选格（optimize|sweep|sensitivity 的 best 或人工点名的次优格）
-  → apply-best（或手写）→ configs/experiments/<name>_vN.yaml   # 仅候选
-  → train research + analyze trades
-  → 过适用的 G1–G9e（sensitivity 定稿必过 G7；标 champion 必过 G9b/c/d）
-  → 通过：study decision 宣布冻结；可进 OOS
-  → 失败：该 vN 不得当 champion；换下一格或回退一层；decision 记录「否决的更高夏普格」与失败闸门 ID
-```
-
-禁止：`best_value` 最高 → apply-best → **跳过 research/闸门** → 称完整策略。
-
-## 与 `analyze trades` 字段对照
-
-| 闸门 | 主要读 |
-|------|--------|
-| G0b, G2–G4 | `exit_reasons` / `exit_reason_groups`（share、pnl） |
-| G5, G6 | `mean_invested`、`empty_cash_share`、metrics.ann_return / sharpe |
-| G1 | `ranked_events` 规模、sweep `n_events_kept`、`sample_profile` |
-| G9* | `evaluation.*_years`、`sample_profile.years` / `n_events`（分角色 run） |
-
-```bash
-qr analyze trades --run <research_run_id> --format json --quiet
-```
-
-## 过闸时写入 decision
-
-触发/通过的闸门 ID；否决则回退阶段 + 下一动作；旁路则标签 + 对用户一句限制说明。  
-定稿/停手汇报口径见 [research-loop.md](research-loop.md)。
+These review items are not currently automatic statistical gates. Do not represent a successful pipeline envelope as a strategy approval.

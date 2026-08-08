@@ -254,12 +254,13 @@ def research_evaluate(
 @pipeline_app.command("research")
 def pipeline_research_cmd(
     config: str = typer.Option(..., "--config"),
-    run_id: Optional[str] = typer.Option(None, "--run-id"),
+    run_id: str = typer.Option(..., "--run-id"),
+    role: str = typer.Option(..., "--role"),
     n_trials_assumed: Optional[int] = typer.Option(None, "--n-trials-assumed"),
 ) -> None:
     started = utc_now_iso()
     try:
-        result = pipeline_research(config, run_id=run_id, n_trials_assumed=n_trials_assumed)
+        result = pipeline_research(config, run_id=run_id, role=role, n_trials_assumed=n_trials_assumed)
         _out(ResultEnvelope(command="pipeline.research", started_at=started, finished_at=utc_now_iso(), run_id=result["run_id"], summary=result["summary"], artifacts=result["artifacts"]))
     except Exception as error:
         _research_failure("pipeline.research", started, error)
@@ -275,23 +276,24 @@ def _run_pipeline_command(command: str, operation, *args, **kwargs) -> None:
 
 
 @pipeline_app.command("optimize")
-def pipeline_optimize_cmd(config: str = typer.Option(..., "--config"), feature: Optional[str] = typer.Option(None, "--feature"), side: str = typer.Option("auto", "--side"), keep_frac: str = typer.Option("0.1,0.2,0.3,0.4", "--keep-frac"), n_trials: Optional[int] = typer.Option(None, "--n-trials")) -> None:
-    _run_pipeline_command("pipeline.optimize", pipeline_optimize, config, feature=feature, side=side, keep_frac=keep_frac, n_trials=n_trials)
+def pipeline_optimize_cmd(config: str = typer.Option(..., "--config"), run_id: str = typer.Option(..., "--run-id"), role: str = typer.Option("train", "--role"), feature: Optional[str] = typer.Option(None, "--feature"), side: str = typer.Option("auto", "--side"), keep_frac: str = typer.Option("0.1,0.2,0.3,0.4", "--keep-frac"), n_trials: Optional[int] = typer.Option(None, "--n-trials")) -> None:
+    _run_pipeline_command("pipeline.optimize", pipeline_optimize, config, run_id=run_id, role=role, feature=feature, side=side, keep_frac=keep_frac, n_trials=n_trials)
 
 
 @pipeline_app.command("sweep")
-def pipeline_sweep_cmd(config: str = typer.Option(..., "--config"), set_specs: list[str] = typer.Option(..., "--set"), metric: str = typer.Option("sharpe", "--metric"), max_grid: int = typer.Option(64, "--max-grid")) -> None:
-    _run_pipeline_command("pipeline.sweep", pipeline_sweep, config, set_specs=set_specs, metric=metric, max_grid=max_grid)
+def pipeline_sweep_cmd(config: str = typer.Option(..., "--config"), run_id: str = typer.Option(..., "--run-id"), role: str = typer.Option("train", "--role"), set_specs: list[str] = typer.Option(..., "--set"), metric: str = typer.Option("sharpe", "--metric"), max_grid: int = typer.Option(64, "--max-grid")) -> None:
+    _run_pipeline_command("pipeline.sweep", pipeline_sweep, config, run_id=run_id, role=role, set_specs=set_specs, metric=metric, max_grid=max_grid)
 
 
 @pipeline_app.command("sensitivity")
-def pipeline_sensitivity_cmd(config: str = typer.Option(..., "--config"), cost_mult: str = typer.Option("1,1.5,2", "--cost-mult"), stop: str = typer.Option("-0.05,-0.086,-0.12", "--stop"), take: str = typer.Option("0.10,0.158,0.20", "--take"), max_grid: int = typer.Option(64, "--max-grid")) -> None:
-    _run_pipeline_command("pipeline.sensitivity", pipeline_sensitivity, config, cost_mult=cost_mult, stop=stop, take=take, max_grid=max_grid)
+def pipeline_sensitivity_cmd(config: str = typer.Option(..., "--config"), run_id: str = typer.Option(..., "--run-id"), role: str = typer.Option("train", "--role"), cost_mult: str = typer.Option("1,1.5,2", "--cost-mult"), stop: str = typer.Option("-0.05,-0.086,-0.12", "--stop"), take: str = typer.Option("0.10,0.158,0.20", "--take"), max_grid: int = typer.Option(64, "--max-grid")) -> None:
+    _run_pipeline_command("pipeline.sensitivity", pipeline_sensitivity, config, run_id=run_id, role=role, cost_mult=cost_mult, stop=stop, take=take, max_grid=max_grid)
 
 
 @analyze_app.command("trades")
 def analyze_trades(
     run: str = typer.Option(..., "--run"),
+    role: Optional[str] = typer.Option(None, "--role"),
 ):
     """Read-only trade / invested / reject / yearly diagnostics for a finished run."""
     started = utc_now_iso()
@@ -308,7 +310,7 @@ def analyze_trades(
         _out(env, int(code))
         return
     try:
-        result = analyze_trades_run(run_dir)
+        result = analyze_trades_run(run_dir, role=role)
         env = ResultEnvelope(
             command="analyze.trades",
             started_at=started,
@@ -435,6 +437,7 @@ def config_apply_best(
 @analyze_app.command("report")
 def analyze_report(
     run: str = typer.Option(..., "--run"),
+    role: Optional[str] = typer.Option(None, "--role"),
     train_run: Optional[str] = typer.Option(
         None, "--train-run", help="override train split run_id for side-by-side table"
     ),
@@ -472,6 +475,7 @@ def analyze_report(
             holdout_run=holdout_run,
             holdout_stress_run=holdout_stress_run,
             full_run=full_run,
+            role=role,
         )
         data = json.loads(json_path.read_text(encoding="utf-8"))
         split = data.get("split_comparison") or {}

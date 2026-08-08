@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -62,6 +63,39 @@ def _universe_fingerprint(universe: str, calendar: list[date], config: SampleCon
     return fingerprint_paths(paths)
 
 
+def _universe_st_filter_status(
+    calendar: list[date], config: SampleConfig
+) -> tuple[str, dict[str, str]]:
+    """Read zer0share's per-session universe-build quality metadata."""
+    settings = get_settings()
+    data_root = Path(os.environ.get("ZER0SHARE_DATA", settings.data_dir()))
+    meta_root = data_root / "stock" / "universe" / "build_meta"
+    by_date: dict[str, str] = {}
+    for session in calendar:
+        if not config.start_date <= session <= config.end_date:
+            continue
+        path = meta_root / f"date={_yyyymmdd(session)}.json"
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            status = payload.get("st_filter_status")
+        except (OSError, json.JSONDecodeError):
+            status = None
+        by_date[session.isoformat()] = str(status) if status else "unknown"
+
+    statuses = set(by_date.values())
+    if statuses == {"full"}:
+        aggregate = "full"
+    elif "unknown" in statuses:
+        aggregate = "unknown"
+    elif "listed_only" in statuses:
+        aggregate = "listed_only"
+    elif len(statuses) == 1:
+        aggregate = next(iter(statuses))
+    else:
+        aggregate = "mixed"
+    return aggregate, by_date
+
+
 class MarketSampleProvider:
     """Materialize next-session-effective observations from daily universe snapshots."""
 
@@ -109,6 +143,9 @@ class MarketSampleProvider:
             )
 
         frame = pl.DataFrame(observations, schema=_SAMPLE_SCHEMA).sort("asof_session", "instrument")
+        st_filter_status, st_filter_status_by_date = _universe_st_filter_status(
+            self._calendar, config
+        )
         manifest = {
             "sample_kind": "market",
             "universe": config.universe,
@@ -120,6 +157,8 @@ class MarketSampleProvider:
             "zer0share_data_fingerprint": _universe_fingerprint(
                 config.universe, self._calendar, config
             ),
+            "st_filter_status": st_filter_status,
+            "st_filter_status_by_date": st_filter_status_by_date,
         }
         return SampleSet(frame=frame, manifest=manifest)
 

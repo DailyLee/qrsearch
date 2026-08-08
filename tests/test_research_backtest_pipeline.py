@@ -23,14 +23,17 @@ def test_run_research_strategy_uses_frozen_dataset_and_writes_backtest_artifacts
     config = research_config(risk=RiskConfig(max_hold_sessions=2))
     config_path = tmp_path / "market.yaml"
     config_path.write_text(config.model_dump_json(), encoding="utf-8")
+    (run_dir / "config.snapshot.yaml").write_text(config.model_dump_json(), encoding="utf-8")
+    (artifacts_dir / "factor_screening_manifest.json").write_text("{}", encoding="utf-8")
     dataset = ResearchDataset(
         pl.DataFrame(
             {
-                "sample_id": ["sample"],
-                "instrument": ["000001.SZ"],
-                "asof_session": [date(2024, 1, 2)],
-                "effective_session": [date(2024, 1, 3)],
-                "features.alpha": [1.0],
+                "sample_id": ["train", "validate"],
+                "instrument": ["000001.SZ", "000002.SZ"],
+                "asof_session": [date(2024, 1, 2), date(2024, 1, 2)],
+                "effective_session": [date(2024, 1, 3), date(2024, 1, 3)],
+                "features.alpha": [1.0, 2.0],
+                "role": ["train", "validate"],
             }
         ),
         {"input_hashes": {"features": "snapshot-sha"}},
@@ -38,11 +41,6 @@ def test_run_research_strategy_uses_frozen_dataset_and_writes_backtest_artifacts
     snapshot = FeatureSnapshot(dataset.frame.select(dataset.frame.columns[:4]), {"feature_snapshot_hash": "snapshot-sha"})
     settings = AppSettings(runs_dir=tmp_path / "runs", cache_dir=tmp_path / "cache")
     monkeypatch.setattr(pipeline, "get_settings", lambda: settings)
-    monkeypatch.setattr(
-        pipeline,
-        "materialize_research",
-        lambda _config_path, run_id=None: {"run_id": run_id or "frozen-run"},
-    )
     monkeypatch.setattr(
         pipeline,
         "_load_frozen_run",
@@ -54,6 +52,12 @@ def test_run_research_strategy_uses_frozen_dataset_and_writes_backtest_artifacts
         lambda _config: [date(2024, 1, 2), date(2024, 1, 3), date(2024, 1, 4), date(2024, 1, 5)],
     )
     monkeypatch.setattr(pipeline, "load_price_panel", lambda *args, **kwargs: object())
+    seen: dict[str, object] = {}
+    original_adapter = pipeline.build_market_signal_frame
+    def capture_adapter(selected, cfg, calendar):
+        seen["roles"] = selected.frame.get_column("role").unique().to_list()
+        return original_adapter(selected, cfg, calendar)
+    monkeypatch.setattr(pipeline, "build_market_signal_frame", capture_adapter)
     monkeypatch.setattr(
         pipeline,
         "run_backtest",
@@ -65,11 +69,15 @@ def test_run_research_strategy_uses_frozen_dataset_and_writes_backtest_artifacts
         ),
     )
 
-    result = run_research_strategy(config_path, run_id="frozen-run", n_trials_assumed=3)
+    result = run_research_strategy(
+        config_path, run_id="frozen-run", role="validate", n_trials_assumed=3
+    )
 
     assert result["run_id"] == "frozen-run"
     assert result["summary"]["sample_kind"] == "market"
     assert result["summary"]["snapshot_sha256"] == "snapshot-sha"
+    assert result["summary"]["role"] == "validate"
+    assert seen["roles"] == ["validate"]
     assert result["summary"]["metrics"]["n_trials"] == 3
     assert set(result["artifacts"]) >= {
         "ranked_signals",
@@ -79,6 +87,7 @@ def test_run_research_strategy_uses_frozen_dataset_and_writes_backtest_artifacts
         "rejects_summary",
     }
     assert not (artifacts_dir / "ranked_events.parquet").exists()
-    assert (artifacts_dir / "ranked_signals.parquet").exists()
-    assert (artifacts_dir / "equity.csv").exists()
-    assert (artifacts_dir / "trades.csv").exists()
+    role_dir = artifacts_dir / "backtests" / "validate"
+    assert (role_dir / "ranked_signals.parquet").exists()
+    assert (role_dir / "equity.csv").exists()
+    assert (role_dir / "trades.csv").exists()

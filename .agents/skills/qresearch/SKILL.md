@@ -1,42 +1,34 @@
 ---
 name: qresearch
-description: 编排 qrsearch 的市场因子物化与 train-only zer0factor 评估；用户提到 qr、因子分析、market research 或冻结因子快照时使用。
+description: 编排 qrsearch 的 PIT 市场因子物化、train-only zer0factor 评估与按角色冻结回测；用户提到 qr、因子分析或市场研究时使用。
 ---
 
-# qresearch — Iteration 3 market research workflow
+# qresearch — market research workflow
 
-This iteration exposes deterministic market materialization, train-only factor screening, and the
-market-only `qr pipeline research` strategy/backtest path. It always reads the frozen run dataset after
-materialization; it never queries zer0factor during signal generation or backtesting.
+qresearch 是 market-only、冻结数据集优先的研究内核。zer0share 提供 PIT universe 和行情；zer0factor 提供已物化因子与 train-only 评估。历史 `workspace/events/**` 仅为只读归档，产品没有 event/CSV/ops 命令。
 
 ## Required workflow
 
-1. Read [reference.md](reference.md) for the active CLI and artifact contract.
-2. Follow [factor-analysis.md](factor-analysis.md) exactly.
-3. Use `qr data ping --format json --quiet`.
-4. List registry names with `qr research factors --format json --quiet`.
-5. Create a new experiment from `configs/examples/market_factors.yaml` with `qr config new`; fill
-   the real zer0share universe, dates, explicit temporal roles, and existing zer0factor refs.
-6. Materialize, then evaluate the same run.
-7. Read zer0factor summary/report/daily IC/quantile returns and qresearch factor redundancy.
-8. Write the `factor_analysis` decision from train evidence only.
-9. Set an explicit `risk.max_hold_sessions`, then run `qr pipeline research --config <yaml> --format json --quiet`.
+1. 阅读 [reference.md](reference.md) 与 [factor-analysis.md](factor-analysis.md)。
+2. `qr data ping --format json --quiet`，随后 `qr research factors --format json --quiet`。
+3. 用 `qr config new` 从 `configs/examples/market_factors.yaml` 新建实验；填写真实 universe、日期、因子 refs 与互不重叠的 temporal roles。
+4. `qr research materialize --config <yaml> --run-id <id> --format json --quiet`。
+5. `qr research evaluate --config <yaml> --run-id <id> --format json --quiet`；只根据该 run 的 train zer0factor 证据写 `factor_analysis` decision。
+6. 仅在同一个已评估 run 上运行策略：
+   `qr pipeline research --config <yaml> --run-id <id> --role <train|validate|holdout_final|holdout_stress> --format json --quiet`。
+7. 只有 `train` 可用于 `pipeline optimize`、`pipeline sweep` 与 `pipeline sensitivity`；所有命令均必须提供 `--run-id` 和 `--role train`。
 
 ## Hard constraints
 
-- Agent I/O is `--format json --quiet`; stdout must be one JSON envelope.
-- No event/CSV provider or command exists. Historical `workspace/events/**` and
-  `workspace/events_ascii/**` remain read-only archival data.
-- Market membership comes from daily zer0share universe snapshots, never the current listing table.
-- Factor values and evaluation come from zer0factor. qresearch does not calculate a second IC,
-  quantile-return, monotonicity, or preprocessing stack.
-- The exact persisted `feature_snapshot.parquet` SHA-256 is the run identity used by dataset lineage
-  and screening audit.
-- Screening sees train membership only. Never use validate/holdout outcomes to select factors.
-- Raw and neutralized comparisons require separate, already-materialized zer0factor refs.
-- Empty universe, zero factor coverage, missing labels, or incomplete artifacts are failures, never
-  skipped successes.
+- Agent I/O 使用 `--format json --quiet`；stdout 为单一 JSON 信封。
+- pipeline 从既有 `dataset.parquet` 读取一个显式 role，不会重新物化，也不会重新查询 zer0factor。
+- 因子选择只看 train；validate 与 holdout 只能用于确认既定策略，不能反向选因子或调参。
+- market membership 来自 daily zer0share universe snapshots；`st_filter_status` 必须为 `full` 才可 promote。`listed_only`、`unknown` 与 `mixed` 只可研究、不可推广。
+- 需要显式 `risk.max_hold_sessions`，并在 `risk.exit_priority` 中保留 `max_hold`。市场路径没有事件型计划退出信号。
+- 空 universe、零因子覆盖、无标签、缺失 screening artifacts、空 role 都是失败，绝不静默跳过。
 
-The older strategy/backtest documents in this directory describe future Iteration 3 concerns, not
-active commands. Do not execute command snippets from them until the CLI is restored on the frozen
-market dataset.
+## Gate boundary
+
+当前自动执行：冻结 config/hash 一致性、已完成 factor screening、role 非空、search 的 train-only 限制，以及 promote 前 ST filter 为 full。样本厚度、统计显著性、经济阈值与多窗口稳定性仍是人工审阅清单，不能宣称已由 CLI 自动放行。
+
+专题说明： [strategy-design.md](strategy-design.md)、[backtest-optimize.md](backtest-optimize.md)、[quality-gates.md](quality-gates.md)、[research-loop.md](research-loop.md)。

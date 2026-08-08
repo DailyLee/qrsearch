@@ -182,7 +182,7 @@ def test_app_settings_define_strict_zer0factor_locations() -> None:
 
     assert fields["zer0factor_root"].default == r"C:\Users\dl271\Downloads\code\zer0factor"
     assert fields["zer0factor_factor_dir"].default == Path("../zer0factor/data/factors")
-    assert fields["zer0factor_db_path"].default == Path("../zer0factor/data/factors.duckdb")
+    assert fields["zer0factor_db_path"].default == Path("../zer0factor/db/factor_meta.duckdb")
 
 
 def test_get_factor_storage_reports_missing_dependencies_without_creating_them(tmp_path: Path) -> None:

@@ -59,3 +59,20 @@ def test_analyze_trades_run_writes_artifact(tmp_path: Path):
     assert 0.0 <= out["summary"]["mean_invested"] <= 1.0
     assert out["summary"]["reject_top"][0]["reason"] == "limit_up"
     assert (tmp_path / "artifacts" / "trades_diagnostics.json").exists()
+
+
+def test_analyze_trades_reads_role_scoped_backtest_artifacts(tmp_path: Path):
+    art = tmp_path / "artifacts" / "backtests" / "holdout_final"
+    art.mkdir(parents=True)
+    (art / "equity.csv").write_text(
+        "session,cash,nav,n_positions\n2024-01-02,40,100,1\n", encoding="utf-8"
+    )
+    (art / "trades.csv").write_text("side,reason,pnl,fee\nsell,stop,-2,1\n", encoding="utf-8")
+    (art / "rejects_summary.json").write_text("[]", encoding="utf-8")
+
+    out = analyze_trades_run(tmp_path, role="holdout_final")
+
+    assert out["summary"]["trade_stats"]["n_sells"] == 1
+    assert Path(out["artifacts"]["trades_diagnostics"]).parts[-3:] == (
+        "backtests", "holdout_final", "trades_diagnostics.json"
+    )

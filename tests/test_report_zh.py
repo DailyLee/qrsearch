@@ -13,10 +13,25 @@ from qresearch.engines.analysis.report import (
     build_yearly_chart,
     enrich_conclusion,
     evaluate_gates,
+    load_run_artifacts,
     render_html,
     summarize_trades,
     write_report,
 )
+
+
+def test_load_run_artifacts_selects_a_role_scoped_backtest(tmp_path: Path):
+    art = tmp_path / "artifacts" / "backtests" / "holdout_final"
+    art.mkdir(parents=True)
+    (art / "metrics.json").write_text('{"sharpe": 1.2}', encoding="utf-8")
+    (art / "equity.csv").write_text("session,cash,nav\n2024-01-02,10,100\n", encoding="utf-8")
+
+    loaded = load_run_artifacts(tmp_path, role="holdout_final")
+
+    assert loaded["metrics"]["sharpe"] == 1.2
+    assert Path(loaded["paths"]["metrics_json"]).parts[-3:] == (
+        "backtests", "holdout_final", "metrics.json"
+    )
 
 
 def test_summarize_trades_and_chinese_html(tmp_path: Path):

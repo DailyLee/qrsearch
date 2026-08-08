@@ -39,9 +39,9 @@
 - 无隐式 +1：延迟只用 `execution.lag_sessions`。
 - 领域词：`entry_intent_date` / `exit_intent_date` / `features.*`；CSV `buy_date`/`code` 仅 ingest alias。
 - 信号层状态无关；持仓配额在 `pretrade`；回测不依赖 CLI/HTML/Optuna。
-- **事件原始数据只读**：禁止改/删/覆盖 `workspace/events/**` 与 `workspace/events_ascii/**`。仅 `--csv` 读取；衍生只写 `workspace/runs/`。`.codex/hooks.json` 只提供额外保护，不改变这项约束。
-- 板块分流：`ingest.board` = `limit10`（默认）| `limit20` | `all`；`limit20` = 科创 688/689 + 创业 300/301。两类分开研究。
-- 研究样本：充分利用 events 实际覆盖（见 `sample_profile.years` / `years_span`）；勿因截断丢年；full 须覆盖本次全部可用年（细则见 skill）。
+- **事件原始数据只读**：禁止改/删/覆盖 `workspace/events/**` 与 `workspace/events_ascii/**`；它们只为归档，qresearch 没有 `--csv` 或 event ingest 命令。衍生只写 `workspace/runs/`。
+- 研究样本：使用 zer0share 的每日 PIT universe snapshot；`sample.universe` 决定样本，不存在 `ingest.board`。必须记录 `st_filter_status`，非 `full` 的 run 不可 promote。
+- 时间样本：`evaluation` 声明并冻结为 `train` / `validate` / `holdout_final` / `holdout_stress`。pipeline 必须复用同一已评估 run 并显式选择 role；所有搜索只可使用 `train`。
 
 ## 改代码时
 

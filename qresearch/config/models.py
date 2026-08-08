@@ -219,7 +219,7 @@ class HoldoutWindow(_StrictConfigModel):
 
 
 class EvaluationConfig(_StrictConfigModel):
-    """Sample-split protocol (declaration). Engine does not auto-slice CSVs."""
+    """Temporal split protocol persisted into the frozen market dataset."""
 
     primary_metric: Literal["absolute", "excess"] = "absolute"
     train_years: list[str] = Field(default_factory=list)

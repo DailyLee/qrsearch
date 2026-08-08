@@ -212,6 +212,8 @@ def materialize_research(
             "sample_rows": samples.frame.height,
             "feature_snapshot_sha256": snapshot.manifest["feature_snapshot_hash"],
             "input_hashes": dataset.metadata.get("input_hashes", {}),
+            "st_filter_status": samples.manifest.get("st_filter_status"),
+            "st_filter_status_by_date": samples.manifest.get("st_filter_status_by_date", {}),
         }
     )
     artifacts = _materialized_artifacts(writer.root)
@@ -365,18 +367,69 @@ def evaluate_research(
     }
 
 
+_PIPELINE_ROLES = ("train", "validate", "holdout_final", "holdout_stress")
+
+
+def load_frozen_strategy_run(
+    config_path: str | Path,
+    *,
+    run_id: str,
+    role: str,
+) -> tuple[ResearchConfig, FeatureSnapshot, ResearchDataset, dict[str, str], Path]:
+    """Load one evaluated frozen run and select exactly one temporal role."""
+    _validate_run_id(run_id)
+    if role not in _PIPELINE_ROLES:
+        raise ResearchConfigurationError(
+            "pipeline role must be one of: " + ", ".join(_PIPELINE_ROLES)
+        )
+    settings = get_settings()
+    run_dir = Path(settings.runs_dir) / run_id
+    if not run_dir.is_dir():
+        raise ResearchDataError(f"research run not found: {run_id}")
+
+    requested_config = _load_config(config_path)
+    frozen_config = _load_config(run_dir / "config.snapshot.yaml")
+    if not _same_config(requested_config, frozen_config):
+        raise ResearchConfigurationError(f"config does not match frozen research run {run_id}")
+    snapshot, dataset, artifacts = _load_frozen_run(run_dir)
+    if not (run_dir / "artifacts" / "factor_screening_manifest.json").is_file():
+        raise ResearchDataError(
+            f"research run has not completed factor screening: {run_id}"
+        )
+    if "role" not in dataset.frame.columns:
+        raise ResearchDataError("frozen research dataset is missing temporal role")
+    selected = dataset.frame.filter(pl.col("role") == role)
+    if selected.is_empty():
+        raise ResearchDataError(f"frozen research run has no rows for role={role}")
+    return (
+        frozen_config,
+        snapshot,
+        ResearchDataset(
+            frame=selected,
+            metadata={
+                **dataset.metadata,
+                "pipeline_role": role,
+                "pipeline_input_rows": selected.height,
+            },
+        ),
+        artifacts,
+        run_dir,
+    )
+
+
 def run_research_strategy(
     config_path: str | Path,
-    run_id: str | None = None,
+    *,
+    run_id: str,
+    role: str,
     n_trials_assumed: int | None = None,
 ) -> dict[str, object]:
-    """Run signals and the daily backtest from one newly frozen market dataset."""
-    config = _load_config(config_path)
-    materialized = materialize_research(config_path, run_id=run_id)
-    resolved_run_id = str(materialized["run_id"])
+    """Run signals and a daily backtest from one evaluated frozen role."""
+    config, snapshot, dataset, artifacts, run_dir = load_frozen_strategy_run(
+        config_path, run_id=run_id, role=role
+    )
+    resolved_run_id = run_id
     settings = get_settings()
-    run_dir = Path(settings.runs_dir) / resolved_run_id
-    snapshot, dataset, artifacts = _load_frozen_run(run_dir)
 
     calendar = _calendar_for(config)
     signal_frame = build_market_signal_frame(dataset, config, calendar)
@@ -391,7 +444,8 @@ def run_research_strategy(
     metrics = attach_overfit_metrics(backtest.metrics, n_trials=assumed_trials)
     metrics.update(mean_invested_from_equity(backtest.equity))
 
-    artifact_dir = run_dir / "artifacts"
+    artifact_dir = run_dir / "artifacts" / "backtests" / role
+    artifact_dir.mkdir(parents=True, exist_ok=True)
     ranked_path = artifact_dir / "ranked_signals.parquet"
     equity_path = artifact_dir / "equity.csv"
     trades_path = artifact_dir / "trades.csv"
@@ -414,6 +468,18 @@ def run_research_strategy(
 
     meta_path = run_dir / "meta.json"
     meta = _read_json_object(meta_path, "run meta") if meta_path.is_file() else {}
+    pipeline_results = dict(meta.get("pipeline_results") or {})
+    pipeline_results[role] = {
+        "input_rows": dataset.frame.height,
+        "metrics": metrics,
+        "artifacts": {
+            "ranked_signals": _resolved(ranked_path),
+            "equity": _resolved(equity_path),
+            "trades": _resolved(trades_path),
+            "metrics": _resolved(metrics_path),
+            "rejects_summary": _resolved(rejects_path),
+        },
+    }
     meta.update(
         {
             "command": "pipeline.research",
@@ -426,8 +492,13 @@ def run_research_strategy(
             "zer0share_fingerprint": dataset.metadata.get("input_hashes", {}).get("samples"),
             "zer0factor_fingerprint": snapshot.manifest.get("zer0factor_data_fingerprint"),
             "zer0factor_revision": snapshot.manifest.get("zer0factor_repo_revision"),
+            "st_filter_status": meta.get("st_filter_status"),
+            "st_filter_status_by_date": meta.get("st_filter_status_by_date", {}),
             "n_trials_assumed": assumed_trials,
             "execution_model": "daily_open_historical_limits",
+            "pipeline_role": role,
+            "pipeline_input_rows": dataset.frame.height,
+            "pipeline_results": pipeline_results,
         }
     )
     _write_json(meta_path, meta)
@@ -437,6 +508,8 @@ def run_research_strategy(
         "summary": {
             "sample_kind": "market",
             "universe": config.sample.universe,
+            "role": role,
+            "input_rows": dataset.frame.height,
             "snapshot_sha256": snapshot.manifest["feature_snapshot_hash"],
             "ranked_signals": ranked.height,
             "metrics": metrics,

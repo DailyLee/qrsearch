@@ -37,6 +37,11 @@ def promote_run(
                 missing.append(name)
         if missing:
             raise PermissionError("market lineage is incomplete: " + ", ".join(missing))
+        if meta.get("st_filter_status") != "full":
+            raise PermissionError(
+                "market ST filter is not full: "
+                + str(meta.get("st_filter_status") or "unknown")
+            )
     promotable = bool(conclusion.get("promotable"))
     if not promotable and not force:
         raise PermissionError("run is not promotable; pass force=True to override")
@@ -80,6 +85,7 @@ def promote_run(
         "feature_snapshot_sha256": meta.get("feature_snapshot_sha256"),
         "zer0share_fingerprint": meta.get("zer0share_fingerprint"),
         "zer0factor_revision": meta.get("zer0factor_revision"),
+        "st_filter_status": meta.get("st_filter_status"),
     }
     (dest / "provenance.json").write_text(
         json.dumps(provenance, ensure_ascii=False, indent=2), encoding="utf-8"

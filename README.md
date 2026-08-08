@@ -46,7 +46,12 @@ qr config new \
 
 qr research materialize --config configs/experiments/<study>.yaml --format json --quiet
 qr research evaluate --config configs/experiments/<study>.yaml --run-id <materialize_run_id> --format json --quiet
-qr pipeline research --config configs/experiments/<study>.yaml --format json --quiet
+qr pipeline research --config configs/experiments/<study>.yaml \
+  --run-id <materialize_run_id> --role train --format json --quiet
+qr pipeline research --config configs/experiments/<study>.yaml \
+  --run-id <materialize_run_id> --role validate --format json --quiet
+qr pipeline research --config configs/experiments/<study>.yaml \
+  --run-id <materialize_run_id> --role holdout_final --format json --quiet
 ```
 
 `research factors` only lists readable registry names. It does not read factor values, calculate
@@ -94,9 +99,20 @@ qr study decision ...
 qr study list ...
 ```
 
-`pipeline research` materializes one run, rereads its frozen `dataset.parquet`, maps observations to the
-existing signal schema, and runs the existing daily backtest. Set `risk.max_hold_sessions` explicitly;
-rows without a calendar exit are omitted rather than assigned a guessed holding period.
+Every `pipeline` command reuses an existing, evaluated frozen run and requires an explicit temporal
+role. `pipeline research` accepts `train`, `validate`, `holdout_final`, or `holdout_stress`; optimize,
+sweep, and sensitivity accept only `train`. Pipeline commands validate the supplied YAML against the
+run snapshot, never rematerialize, and record the selected role/input row count in run metadata. Set
+`risk.max_hold_sessions` explicitly; rows without a calendar exit are omitted rather than assigned a
+guessed holding period.
+
+Role-specific backtests are preserved under `artifacts/backtests/<role>/`; use `qr analyze trades --run
+<id> --role <role>` or `qr analyze report --run <id> --role <role>` to inspect one role without
+overwriting another.
+
+The PIT universe lineage includes `st_filter_status`. A status other than `full` (including
+`listed_only`, `mixed`, or `unknown`) is suitable only for explicitly limited research and cannot be
+promoted, even with `--force`.
 
 JSON envelopes include `schema_version`, `run_id`, `summary`, `artifacts`, `next_actions`, and
 `error`. Exit codes are `0` success, `2` configuration, `3` market/factor coverage or artifact
